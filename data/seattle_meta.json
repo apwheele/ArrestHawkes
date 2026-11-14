@@ -1,0 +1,26 @@
+{
+ "start": "2019-01-01",
+ "end": "2026-07-01",
+ "carprowl": {
+  "offense_rows": 66960,
+  "reports": 66960,
+  "located": {
+   "car prowl": [
+    66954,
+    66349
+   ],
+   "injury": [
+    1,
+    1
+   ],
+   "shots fired": [
+    5,
+    5
+   ]
+  },
+  "n": 66355,
+  "arrested": 722,
+  "booked": 371,
+  "arrest_before_offense": 34
+ }
+}

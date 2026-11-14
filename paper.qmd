@@ -1,0 +1,1015 @@
+---
+title: "Breaking the chain in a self-exciting point process: estimating the repeat crimes an arrest prevents"
+author: "Andrew P. Wheeler"
+abstract: |
+  Self-exciting point process models of crime let each crime temporarily
+  raise the rate of further crimes nearby, but they have no way for the
+  police to end a chain. I add a term that does. When a crime has an
+  arrest, the triggering it had left is multiplied by a factor kappa, where
+  zero is an arrest that ends the chain and one is no effect. The arrest
+  enters at the time it happens, so a fast arrest removes more than a slow
+  one, and the model avoids the bias of treating an eventual arrest as a
+  fixed trait of the crime. The fitted model gives the number of follow-on
+  crimes each arrest prevented and the total. In simulations it recovers
+  kappa and the count of crimes prevented, including when crimes come from
+  offender sprees that arrests cut short, while the fixed-trait version
+  misses from two fifths to nearly all of the crimes prevented. I apply it
+  in two cities that publish arrest times linked to crime reports. Of
+  66,355 car prowls (thefts from motor vehicles) in Seattle, Washington,
+  2019 to mid-2026, 7% were triggered by an earlier car prowl, half of those
+  within four hours and nearly all within a block or two. An arrest cuts
+  the remaining triggering by 95% (kappa 0.05, 95% interval 0.00 to 0.24).
+  The 722 arrests prevented an estimated 42 car prowls (95% interval 26 to
+  56). The effect on a chain is large, but chains are short and arrests are
+  rare, so the total is small. For 27,385 shooting incidents in Chicago,
+  Illinois, 2016 to mid-2026, whose linked arrests match published arrest
+  rates, self-excitation is slight (2% triggered, half within about an
+  hour), and the arrest effect cannot be distinguished from no effect
+  (kappa 0.83, 95% interval 0.19 to 1.78): few shooting arrests come within
+  the hour in which most of the triggering happens. Code, data, and paper
+  source are at
+  https://github.com/apwheele/ArrestHawkes.
+bibliography: references.bib
+link-citations: true
+format:
+  pdf:
+    documentclass: article
+    geometry: margin=1in
+    number-sections: true
+    header-includes:
+      - \usepackage{float}
+  gfm:
+    fig-dpi: 150
+    wrap: none
+    filters:
+      - filters/github-math.lua
+  docx:
+    fig-dpi: 150
+    number-sections: true
+    filters:
+      - filters/docx-clearpage.lua
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: arresthawkes
+---
+
+```{python}
+#| label: setup
+import json
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from IPython.display import Markdown
+
+from arresthawkes import model, plots
+
+plots.use_theme()
+R = Path("results")
+num = lambda v, d=0: f"{v:,.{d}f}"
+pct = lambda v, d=0: f"{v * 100:.{d}f}%"
+pval = lambda p: "< 0.001" if p < 0.001 else f"{p:.3f}"
+def show(df, left=1):
+    """Markdown table; cells are kept as written (no number re-parsing), the
+    first `left` columns left-aligned and the rest right-aligned."""
+    align = ["left"] * left + ["right"] * (df.shape[1] - left)
+    return Markdown(df.astype(str).to_markdown(index=False, disable_numparse=True, colalign=align))
+CRIMES = ["shootings", "carprowl"]
+CNAME = {"shootings": "Shootings (Chicago)", "carprowl": "Car prowls (Seattle)"}
+
+# --- Simulation -------------------------------------------------------------
+# "null" is a scenario name here, not a missing value
+sim = pd.concat([pd.read_csv(f, keep_default_na=False, na_values=[""])
+                 for f in sorted((R / "sim" / "rows").glob("*.csv"))], ignore_index=True)
+SCEN = {"model": "Model", "null": "No arrest effect", "late": "Late arrests", "confounded": "Confounded",
+        "spree": "Sprees", "spree_clear": "Sprees, earlier crimes cleared"}
+KTRUE = {"model": 0.3, "null": 1.0, "late": 0.3, "confounded": 0.3, "spree": 0.0, "spree_clear": 0.0}
+METH = {"dynamic": "Arrest at its time", "static": "Arrest as fixed mark",
+        "dynamic + covariate": "Arrest at its time + covariate"}
+sim["ktrue"] = sim["scenario"].map(KTRUE)
+sim["kappa"] = np.exp(sim["log_kappa"])
+sim["cover_k"] = (sim["kappa_low"] <= sim["ktrue"] * 1.0000001) & (sim["ktrue"] <= sim["kappa_high"])
+# with a true kappa of zero the interval covers when it runs to the bottom of the grid
+sim.loc[sim["ktrue"] == 0, "cover_k"] = sim["kappa_low"] <= np.exp(-7) * 1.0001
+_pl, _ph = model.prediction_interval(sim["est"], sim["low"], sim["high"], sim["direct"], sim["n0"])
+sim["cover"] = (_pl <= sim["truth"]) & (sim["truth"] <= _ph)
+sim["err"] = sim["est"] - sim["truth"]
+
+
+def sim_summary(g):
+    dyn = g["kappa_low"].notna().all()
+    return pd.Series({
+        "reps": len(g), "n": g["n"].mean(), "arrests": g["arrests"].mean(), "ktrue": g["ktrue"].iloc[0],
+        "kmed": g["kappa"].median(), "cover_k": g["cover_k"].mean() if dyn else np.nan,
+        "reject": (g["lr_p"] < 0.05).mean(), "truth": g["truth"].mean(), "est": g["est"].mean(),
+        "rmse": np.sqrt((g["err"] ** 2).mean()), "cover": g["cover"].mean() if dyn else np.nan,
+        "theta": g["theta"].mean(), "omega": g["omega"].mean(), "sigma": g["sigma"].mean(),
+    })
+
+
+simsum = sim.groupby(["scenario", "method"]).apply(sim_summary, include_groups=False)
+SS = lambda scen, meth, col: simsum.loc[(scen, meth), col]
+n_rep = int(sim.groupby("scenario")["seed"].nunique().min())
+
+# --- Chicago shootings and Seattle car prowls ------------------------------
+_cm = json.load(open("data/chicago_meta.json"))
+meta = {"shootings": _cm["chicago_shootings"], "shootings_violent": _cm["chicago_shootings_violent"],
+        "carprowl": json.load(open("data/seattle_meta.json"))["carprowl"]}
+S = {c: json.load(open(R / "models" / f"{c}_summary.json")) for c in CRIMES}
+tab = lambda c, name: pd.read_csv(R / "models" / f"{c}_{name}.csv")
+ci = lambda lohi, d=1: f"{num(lohi[0], d)} to {num(lohi[1], d)}"
+est_ci = lambda r, d=2: f"{r['exp']:.{d}f} ({r['low']:.{d}f} to {r['high']:.{d}f})"
+
+
+def delay_share(c, labels):
+    d = tab(c, "delay")
+    return d.loc[d["delay"].isin(labels), "arrests"].sum() / d["arrests"].sum()
+
+
+FAST = ["at the offense time", "within 1 hour"]
+sh, cp = S["shootings"], S["carprowl"]
+```
+
+# Introduction
+
+Crimes cluster in space and time beyond what stable hot spots explain. A
+shooting is followed by a retaliatory shooting a few blocks away. Someone
+breaking into cars works their way down a street tonight and comes back to
+the same garage later in the week. Self-exciting point process models
+capture this by letting each crime temporarily raise the rate of further
+crimes nearby [@mohler2011; @mohler2014; @reinhart2018review], and they are
+the engine behind a generation of crime forecasting tools [@mohler2015].
+
+In those models every crime excites. Nothing in them represents the police
+ending the chain. But the two stories above each have an obvious way to
+stop: the person doing it gets arrested. In prior work we showed the
+pattern with near repeat counts. For shootings, robberies, residential
+burglaries, and thefts from motor vehicles in Dallas, crimes that resulted
+in an arrest were 20% to 40% less likely to be followed by another crime
+nearby in the following days [@wheeler2021chain]. Those were logistic
+regressions for whether any follow-up crime occurred within a set distance
+and time. A model of that form does not convert easily into a count of
+crimes prevented, and it does not describe how the value of an arrest
+changes with how quickly it is made.
+
+This paper adds a term to the self-exciting model that does the opposite
+of exciting. Each crime starts with the usual triggering kernel. If and
+when the crime has an arrest, whatever triggering it had left is multiplied
+by a factor $\kappa$. A value of $\kappa = 1$ means arrests change nothing,
+$\kappa = 0$ means an arrest ends the chain, and values between are partial
+dampening. Because the arrest enters the model at the time it happens, a
+fast arrest removes more of the kernel than a slow one, and an arrest made
+months later removes almost nothing. The fitted model converts directly
+into the quantity of interest: the expected number of follow-on crimes each
+arrest prevented, and the total across all arrests, including the crimes
+those prevented crimes would have gone on to trigger.
+
+I lay out the model and its likelihood, show in simulations that it
+recovers the arrest effect and the count of crimes prevented, including when
+the data come from an offender spree process it only approximates, and
+apply it to shootings in Chicago, Illinois and car prowls (thefts from
+motor vehicles) in Seattle, Washington. The method needs data that say
+which crime had an arrest and when. Most open crime data lack this, and
+these two cities publish it. Code, data, and paper source are at
+https://github.com/apwheele/ArrestHawkes.
+
+# Model
+
+## A self-exciting model for crime
+
+Crimes are points $(t_i, s_i)$, $i = 1, \dots, N$, with times $t_i$ in an
+observation window $[0, T]$ and locations $s_i$ in the plane. A point
+process is defined by its conditional intensity $\lambda(t, s)$, the
+expected rate of crimes per unit time and area at $(t, s)$ given everything
+that happened before $t$. The self-exciting (Hawkes) model
+[@hawkes1971; @ogata1998; @mohler2011] is
+
+$$
+\lambda(t, s) = \mu(t, s) + \sum_{i:\, t_i < t} \theta_i \, g(t - t_i) \, h(s - s_i).
+$$
+
+The background $\mu(t, s)$ is crime that would happen regardless of recent
+events: chronic hot spots, seasonality, long-run trends. Each past crime
+adds a bump on top. The temporal kernel $g$ and the spatial kernel $h$ are
+probability densities, so $\theta_i$ is the expected number of crimes
+triggered directly by crime $i$, its productivity. The model has a
+branching interpretation that I use throughout: every crime is either a
+background event or the offspring of exactly one earlier crime, offspring
+have offspring of their own, and if productivity averages $n < 1$ then one
+background crime leads to $1/(1 - n)$ crimes in total, counting itself.
+
+I let productivity depend on characteristics of the crime known at the
+time, $\theta_i = \exp(x_i^\top \gamma)$, for example whether a shooting
+injured someone. For the spatial kernel I use a bivariate Gaussian with
+standard deviation $\sigma$. For the temporal kernel, write
+$S(u) = \int_u^\infty g(v)\, dv$ for the share of a crime's triggering that is
+still to come $u$ days after it. I fit two forms and choose by likelihood:
+the exponential, $g(u) = \omega e^{-\omega u}$ with
+$S(u) = e^{-\omega u}$, and a power law (the Omori law of earthquake
+aftershocks, @ogata1988), $g(u) = (p - 1)\, c^{\,p-1} (u + c)^{-p}$ with
+$S(u) = (1 + u/c)^{-(p - 1)}$, which has a sharper peak and a longer tail.
+
+## Arrests dampen what triggering is left
+
+Let $a_i$ be the time of the arrest for crime $i$, with $a_i = \infty$ if
+there is none, and let $A_i(t) = 1$ if $a_i < t$ and 0 otherwise. The model
+with arrest dampening is
+
+$$
+\lambda(t, s) = \mu(t, s) + \sum_{i:\, t_i < t} \theta_i \, \kappa_i^{A_i(t)} \, g(t - t_i) \, h(s - s_i).
+$$
+
+Before the arrest, crime $i$ excites as usual. From the arrest on, its
+kernel is multiplied by $\kappa_i \ge 0$ (@fig-schematic). I mostly use a
+single $\kappa$, but the multiplier can depend on characteristics of the
+arrest, $\kappa_i = \exp(z_i^\top \beta)$, for example whether the person
+was booked into jail or released. The intensity only uses arrests made
+before $t$, so it is a valid conditional intensity, and it stays
+non-negative for any $\kappa_i \ge 0$. General inhibition in Hawkes
+processes, where events subtract from the intensity, needs a nonlinear link
+to keep the intensity positive and complicates estimation
+[@bonnet2021]; scaling a crime's own kernel avoids that.
+
+```{python}
+#| label: fig-schematic
+#| fig-cap: "The arrest term. A crime triggers follow-on crimes at a rate that decays with time (dashed). An arrest multiplies the remaining rate by $\\kappa$ (here 0.3), and the shaded area is the expected number of follow-on crimes the arrest prevents. An arrest made sooner removes more."
+fig, ax = plt.subplots(figsize=(6.2, 3.1))
+plots.schematic(ax)
+plt.tight_layout()
+plt.show()
+```
+
+The expected number of direct offspring of a crime arrested after a delay
+$d_i = a_i - t_i$ is the full-strength part before the arrest plus the
+dampened part after,
+
+$$
+m_i = \theta_i \left[ 1 - S(d_i) \right] + \theta_i \kappa_i S(d_i)
+    = \theta_i \left[ 1 - (1 - \kappa_i)\, S(d_i) \right],
+$$
+
+so the arrest removes $\theta_i (1 - \kappa_i) S(d_i)$ direct offspring.
+With the exponential kernel that is $\theta_i (1 - \kappa_i) e^{-\omega d_i}$:
+an arrest at the scene ($d_i = 0$) removes the share $1 - \kappa_i$ of
+everything the crime would have triggered, and each $\log(2)/\omega$ days of
+delay cuts what the arrest can prevent in half.
+
+What $\kappa$ picks up depends on the crime. For a spree, where follow-on
+crimes are the same person continuing, the arrest incapacitates and
+$\kappa$ should be near zero if the right person is in custody. For
+retaliatory violence the follow-on crime is committed by someone else, and
+an arrest may or may not satisfy the other side [@papachristos2009], so
+$\kappa$ could be anywhere, in principle even above one.
+
+## Why the arrest has to enter at the time it happens
+
+A simpler model treats an eventual arrest as a fixed characteristic of the
+crime, the way @park2021 let gang crimes that received a violence
+interruption response have their own triggering rate. With arrests that is
+wrong in a way that matters. The crime's follow-on crimes
+that came before the arrest could not have been affected by it, but the
+fixed-mark model counts them as evidence about $\kappa$. This is the
+immortal time bias of survival analysis [@suissa2008], and here it runs in
+a known direction: it pulls the estimate of $\kappa$ toward one. It is
+worse than that when arrests clear several crimes at once. If a car prowler
+is caught on the third night and the arrest clears all three reports, the
+first two crimes are "arrested" crimes that each had a follow-on crime, and
+the fixed-mark model reads arrests as failing to stop anything. Entering
+the arrest as a change at time $a_i$ uses only what came after it.
+
+## Likelihood
+
+The log-likelihood of a point process on $[0, T]$ is the sum of the log
+intensity at the observed events minus the integral of the intensity,
+
+$$
+\ell = \sum_{j=1}^{N} \log \lambda(t_j, s_j) - \int_0^T \!\! \int \lambda(t, s)\, ds\, dt .
+$$
+
+The integral has a closed form. Let $c_i = \min(a_i, T) - t_i$ be the time
+crime $i$ spends at full strength inside the window. Ignoring the small
+part of the spatial kernels that falls outside the city,
+
+$$
+\int_0^T \!\! \int \lambda \, ds\, dt = \int_0^T \!\! \int \mu \, ds\, dt
+ + \sum_{i=1}^{N} \theta_i \left\{ \left[ 1 - S(c_i) \right] + \kappa_i \left[ S(c_i) - S(T - t_i) \right] \right\} .
+$$
+
+Each term is the expected offspring of crime $i$ in the window: the share
+due before the arrest at full strength, and the share due between the
+arrest and $T$ multiplied by $\kappa_i$. For a crime with no arrest by $T$
+the second piece is zero. The arrest times are treated as given. This is a
+partial likelihood: I do not model when arrests happen, only what happens to
+the crime rate after they do.
+
+The parameters are estimated by maximizing $\ell$. I supply the analytic
+gradient and use L-BFGS, with standard errors from the inverse of the
+numerically differentiated Hessian. The likelihood can have more than one
+local maximum (a short, tight kernel or a long, wide one), so each fit
+starts from several kernel scales and keeps the best. The test of
+$\kappa = 1$ is a likelihood ratio test against the model without the arrest
+term. When $\kappa$ is near zero its log is poorly described by a normal
+distribution, so I report profile likelihood intervals: the values of
+$\kappa$ whose best-fitting likelihood is within 1.92 of the maximum.
+
+## Background
+
+The background is separable, $\mu(t, s) = \nu(t)\, b(s)$. The temporal part
+$\nu(t)$ is a step function with a free level for each quarter, which
+absorbs trends and seasonality that would otherwise be read as contagion.
+The spatial part $b(s)$ is a kernel density estimate built from the crime
+locations themselves, with a variable bandwidth as in @mohler2011: each
+crime contributes a Gaussian whose standard deviation is the distance to its
+$k$-th nearest neighbor (no smaller than 40 meters), so the surface is
+sharp where crime is dense and smooth where it is sparse. The density at crime $j$ leaves out crime $j$'s
+own kernel. A smoother background leaves more clustering for the triggering
+term to explain, so the choice of $k$ matters for $\theta$. I choose $k$ by
+the likelihood and report how the results move across values.
+
+## Crimes prevented
+
+The direct offspring removed by the arrests made in the window are
+
+$$
+D = \sum_{i:\, a_i \le T} \theta_i (1 - \kappa_i) \left[ S(c_i) - S(T - t_i) \right].
+$$
+
+Each of those crimes would have triggered others. Let
+$n_0 = \frac{1}{N} \sum_i \theta_i$ be the average productivity with no
+arrest effect and $n_1 = n_0 - D/N$ the average productivity given the
+arrests made. With $B$ background crimes, the expected totals are
+$B/(1 - n_0)$ without the arrest effect and $N = B/(1 - n_1)$ with it, and
+the difference is
+
+$$
+P = \frac{B}{1 - n_0} - \frac{B}{1 - n_1} = \frac{D}{1 - n_0} .
+$$
+
+This is the estimate of crimes prevented: the number of additional crimes
+expected had the same arrests been made with no effect on triggering. For a
+single arrest of an average crime made after a delay $d$ it is
+$\bar\theta (1 - \kappa) S(d) / (1 - n_0)$, which gives a curve of crimes
+prevented against time to arrest.
+
+$P$ is an expected count. The number of crimes actually prevented is
+random even if the parameters were known, because how many crimes a crime
+triggers is random. The removed direct offspring are Poisson with mean $D$,
+and each would have started a family of crimes whose size has mean
+$1/(1 - n_0)$ and variance $n_0/(1 - n_0)^3$, so the realized count has
+variance $D \left[ n_0/(1 - n_0)^3 + 1/(1 - n_0)^2 \right]$ around $P$. The
+intervals I report for crimes prevented are prediction intervals for the
+realized count. They start from the interval for $P$ implied by the profile
+likelihood for $\kappa$ (refitting the other parameters at each end) and
+widen each side by this process variance, combining the two in quadrature.
+
+## What has to hold
+
+The model compares what follows arrested crimes, after their arrests, with
+what follows other crimes at the same lag. Reading $\kappa$ as the effect of
+the arrest needs three things. First, crimes that get arrests must not
+differ in productivity for other reasons, given the covariates in
+$\theta_i$. A domestic shooting is both easier to clear and less likely to
+spark retaliation, which would make arrests look more effective than they
+are; a prolific offender who is eventually caught would make them look less
+effective. Second, the arrest must not have been caused by the absence of
+follow-on crimes or the reverse, beyond the time ordering the model already
+respects. Third, the arrest linked to the crime in the data must be the
+relevant one. An arrest that takes an offender off the street prevents that
+person's future crimes whichever report it is filed under, and the model
+only credits it against the crime it is linked to.
+
+# Simulations
+
+I check the method on simulated cities where the number of crimes prevented
+is known. Each world is a 10 km square observed for four years. Background
+crimes arrive at two per day, 60% in 25 hot spots and the rest uniformly.
+Replaying the same random draws with the arrest effect switched off gives
+the crimes that would have occurred, and the difference from the crimes
+that did occur is the true number prevented. There are six scenarios and
+`{python} n_rep` worlds each, averaging
+`{python} num(round(simsum["n"].mean(), -2))` crimes and
+`{python} num(round(simsum["arrests"].mean(), -1))` arrests per world.
+
+The first four draw from the model itself, with productivity
+$\theta = 0.35$, an exponential kernel with a mean of two days
+($\omega = 0.5$), $\sigma = 120$ meters, and 15% of crimes arrested.
+
+- *Model.* $\kappa = 0.3$. Forty percent of arrests are at the scene and
+  the rest follow after an exponential delay averaging three days.
+- *No arrest effect.* The same with $\kappa = 1$.
+- *Late arrests.* $\kappa = 0.3$ and no arrests at the scene; delays
+  average two days, as long as the triggering lasts.
+- *Confounded.* $\kappa = 0.3$. Thirty percent of crimes have a trait that
+  doubles their productivity and quadruples their odds of arrest.
+
+The last two do not come from the model. They simulate offenders. A spree
+starts as a background crime; after each crime the offender commits another
+with probability 0.45 after an exponential gap averaging two days, a short
+distance away. Each crime leads to an arrest with probability 0.15, half at
+the scene and half after a delay averaging two days, and an arrest removes
+every later crime in the spree.
+
+- *Sprees.* The arrest is recorded against the crime that led to it.
+- *Sprees, earlier crimes cleared.* The arrest also clears 70% of the
+  offender's earlier crimes, recorded with the same arrest time.
+
+For each world I fit the model with the arrest entering at its time, and the
+fixed-mark version that treats an eventual arrest as a characteristic of the
+crime. In the confounded scenario I also fit the model with the trait as a
+productivity covariate.
+
+```{python}
+#| label: tbl-sim
+#| tbl-cap: "Simulation results. Median estimate of $\\kappa$, the share of worlds rejecting $\\kappa = 1$ at the 5% level, mean true and estimated crimes prevented, and coverage of the 95% intervals (profile likelihood for $\\kappa$, prediction interval for crimes prevented; models with the arrest at its time only)."
+rows = []
+for scen in SCEN:
+    for meth in METH:
+        if (scen, meth) not in simsum.index:
+            continue
+        r = simsum.loc[(scen, meth)]
+        f = lambda v: "" if np.isnan(v) else pct(v)
+        rows.append({
+            "Scenario": SCEN[scen], "Method": METH[meth], "True $\\kappa$": f"{r['ktrue']:.1f}",
+            "Median $\\kappa$": f"{r['kmed']:.2f}", "Reject $\\kappa$ = 1": pct(r["reject"]), "Cover $\\kappa$": f(r["cover_k"]),
+            "Prevented, true": num(r["truth"]), "Prevented, est.": num(r["est"]), "Cover prevented": f(r["cover"]),
+        })
+show(pd.DataFrame(rows), left=2)
+```
+
+```{python}
+#| label: fig-sim
+#| fig-cap: "Estimated minus true crimes prevented in each simulated world (points) and the median (bar), by scenario and method. Zero is a perfect estimate."
+fig, axes = plt.subplots(2, 3, figsize=(8.2, 5.2))
+short = {"dynamic": "At its\ntime", "static": "Fixed\nmark", "dynamic + covariate": "At its time\n+ covariate"}
+colors = {"dynamic": plots.BLUE, "static": plots.ORANGE, "dynamic + covariate": plots.AQUA}
+for ax, scen in zip(axes.ravel(), SCEN):
+    g = sim[sim["scenario"] == scen]
+    ms = [m for m in METH if m in set(g["method"])]
+    plots.sim_strip(ax, g, "err", 0.0, ms, [short[m] for m in ms], [colors[m] for m in ms], "")
+    ax.set_title(f"{SCEN[scen]} (true mean {num(g['truth'].mean())})", fontsize=9.5)
+for ax in axes[:, 0]:
+    ax.set_ylabel("Estimate minus truth (crimes)")
+plt.tight_layout()
+plt.show()
+```
+
+@tbl-sim and @fig-sim give the results. When the data come from the model,
+the estimate of $\kappa$ is centered on the truth (median
+`{python} f"{SS('model', 'dynamic', 'kmed'):.2f}"` against 0.3), the test
+rejects no effect in `{python} pct(SS('model', 'dynamic', 'reject'))` of
+worlds, and the estimate of crimes prevented averages
+`{python} num(SS('model', 'dynamic', 'est'))` against a true
+`{python} num(SS('model', 'dynamic', 'truth'))`. With no arrest effect the
+test rejects in `{python} pct(SS('null', 'dynamic', 'reject'))` of worlds,
+close to its nominal 5%. Profile intervals for $\kappa$ cover in
+`{python} pct(SS('model', 'dynamic', 'cover_k'))` of worlds and the
+intervals for crimes prevented in
+`{python} pct(SS('model', 'dynamic', 'cover'))`.
+
+The fixed-mark model is biased in every scenario where arrests take time.
+Its median $\kappa$ is `{python} f"{SS('model', 'static', 'kmed'):.2f}"` in
+the first scenario and `{python} f"{SS('late', 'static', 'kmed'):.2f}"`
+when all arrests are late, and it finds
+`{python} pct(1 - SS('late', 'static', 'est') / SS('late', 'static', 'truth'))`
+fewer crimes prevented than there were. When one arrest clears a string of
+earlier crimes it fails entirely: median $\kappa$ of
+`{python} f"{SS('spree_clear', 'static', 'kmed'):.2f}"`, in a world where
+every arrest ends a spree.
+
+Confounding does what it should. Leaving out a trait that raises both
+productivity and the chance of arrest makes arrested crimes look more
+productive, so $\kappa$ is overstated (median
+`{python} f"{SS('confounded', 'dynamic', 'kmed'):.2f}"`) and crimes
+prevented understated. With the trait in the model the bias is gone
+(`{python} f"{SS('confounded', 'dynamic + covariate', 'kmed'):.2f}"`).
+
+In the spree worlds the model is only an approximation: an offender commits
+at most one next crime, where the model's crimes have a Poisson number of
+offspring. It still reads the arrest correctly. The estimate of $\kappa$
+goes to zero (median
+`{python} f"{SS('spree', 'dynamic', 'kmed'):.3f}"`), and estimated crimes
+prevented average `{python} num(SS('spree', 'dynamic', 'est'))` against a
+true `{python} num(SS('spree', 'dynamic', 'truth'))`, an underestimate of
+`{python} pct(1 - SS('spree', 'dynamic', 'est') / SS('spree', 'dynamic', 'truth'))`.
+When arrests also clear earlier crimes the estimate of $\kappa$ still goes
+to zero, but crimes prevented are overstated by
+`{python} pct(SS('spree_clear', 'dynamic', 'est') / SS('spree_clear', 'dynamic', 'truth') - 1)`
+(`{python} num(SS('spree_clear', 'dynamic', 'est'))` against
+`{python} num(SS('spree_clear', 'dynamic', 'truth'))`). Each earlier crime
+cleared by the arrest is credited with removing what was left of its own
+kernel, although the one arrest had already ended the spree. Where an
+arrest clears a string of crimes it should be attached to the last of them.
+In both spree scenarios the intervals, which take the model as given, are
+too narrow: they cover the true count in
+`{python} pct(SS('spree', 'dynamic', 'cover'))` and
+`{python} pct(SS('spree_clear', 'dynamic', 'cover'))` of worlds.
+
+# Data
+
+The model needs, for each crime, a time, a location, and the time of the
+arrest if there was one, and the arrests have to be complete enough that
+an unarrested crime really had no arrest. Few police departments publish
+that. Our earlier near repeat analysis used Dallas [@wheeler2021chain], but
+its public arrest table is missing about half of the arrests its incident
+table reports (below). I use Chicago for shootings and Seattle for car
+prowls. In both, every arrest is tied to the crime by its case number and
+has a date and time. The data were downloaded in November 2026.
+
+*Shootings: Chicago, Illinois.* The city's violence reduction data list
+every victim of a homicide or non-fatal shooting, with the case number, the
+date and time, whether the victim was shot, and a location moved from the
+address but kept on the same block [@cpdvictims]. A shooting incident here
+is a case number with at least one gunshot victim, fatal if any victim
+died, from January 2016 through June 2026. That gives
+`{python} num(meta["shootings"]["n"])` incidents, of which
+`{python} num(meta["shootings"]["fatal"])` were fatal; all have
+coordinates. Whether a shooting was fatal is a productivity covariate. The
+arrest table has one row per arrest with the date and time, the charges,
+and, for about 70% of arrests, the case number of the crime [@cpdarrests].
+I link each shooting to the earliest arrest under its case number. An
+arrest under the same case number is not always of the shooter: of the
+linked shootings, `{python} pct(1 - meta["shootings_violent"]["arrested"] / meta["shootings"]["arrested"])`
+have only arrests on gun possession, drug, or other charges, which may be
+of a victim or bystander. The main analysis counts any arrest under the
+case number, and a sensitivity analysis counts only arrests with a violent
+charge or on a warrant.
+
+```{python}
+#| label: tbl-check
+#| tbl-cap: "Share of Chicago shooting incidents with an arrest in the open data, against arrest rates published from police records. Published figures count victims or cases and were measured soon after the year ended; the open data figures are as of November 2026."
+ys = meta["shootings"]["arrest_share_by_year"]
+yv = meta["shootings_violent"]["arrest_share_by_year"]
+rows = [
+    {"Year": "2022", "Shootings": "Fatal", "Open data, any arrest": pct(ys["2022"]["fatal"]),
+     "Open data, violent charge": pct(yv["2022"]["fatal"]), "Published": "27% (CBS Chicago, from CPD records)"},
+    {"Year": "2023", "Shootings": "Fatal", "Open data, any arrest": pct(ys["2023"]["fatal"]),
+     "Open data, violent charge": pct(yv["2023"]["fatal"]), "Published": "17%, first 10 months (CBS Chicago)"},
+    {"Year": "2021-2024", "Shootings": "Fatal", "Open data, any arrest": pct(sum(ys[y]["fatal"] for y in ("2021", "2022", "2023", "2024")) / 4),
+     "Open data, violent charge": pct(sum(yv[y]["fatal"] for y in ("2021", "2022", "2023", "2024")) / 4),
+     "Published": "25% cleared by arrest, year not stated (Sun-Times)"},
+    {"Year": "2024", "Shootings": "Non-fatal", "Open data, any arrest": pct(ys["2024"]["injury"]),
+     "Open data, violent charge": pct(yv["2024"]["injury"]), "Published": "141 of about 2,300 victims, 6% (Sun-Times)"},
+    {"Year": "2018-2024", "Shootings": "Non-fatal",
+     "Open data, any arrest": pct(sum(ys[str(y)]["injury"] for y in range(2018, 2025)) / 7),
+     "Open data, violent charge": pct(sum(yv[str(y)]["injury"] for y in range(2018, 2025)) / 7),
+     "Published": "1,200 of more than 19,000 victims, about 6% (Sun-Times)"},
+]
+show(pd.DataFrame(rows), left=2)
+```
+
+@tbl-check compares the arrest share in the open data with arrest rates
+reported from police records by CBS Chicago, which obtained them under the
+Freedom of Information Act [@cbs2024], and the Chicago Sun-Times
+[@suntimes2025]. Both separate arrests from the much larger number of
+cases closed by exceptional means. The open data land in the same range:
+about one in five fatal shootings and one in fifteen non-fatal shootings
+had an arrest. The published non-fatal figures count victims, and an
+incident can have several, so per incident they would be somewhat higher.
+
+*Car prowls: Seattle, Washington.* The Seattle Police Department's crime
+table has one row per offense with the report number, the date and time of
+the offense, and a location masked to the hundred block [@spdcrime]. Its
+arrest table starts in 2019 and has one row per arrest charge with the date
+and time of the arrest, the report number of the case, and the type of
+arrest [@spdarrest]. Car prowls are offenses coded theft from motor
+vehicle, from January 2019 through June 2026, which leaves four months for
+late-entered arrests. The offense time is the start of the period the
+victim reports, and for a car broken into overnight that can be off by
+hours. In both cities I link each case to the earliest arrest with the
+same number, and an arrest logged shortly before the offense time
+(`{python} meta["shootings"]["arrest_before_offense"]` shootings,
+`{python} meta["carprowl"]["arrest_before_offense"]` car prowls) is
+treated as made at the scene.
+
+*Cities that did not work.* Seattle also flags shootings, but its public
+file redacts the location of nearly all fatal shootings. In Dallas, the
+incident table's own case status says that 36% to 60% of gun homicides
+each year were cleared by arrest, but only half of the incidents with that
+status appear in the public arrest table, the only source of an arrest
+date, and only a few percent of gun homicides do. In Baltimore, arrests
+that carry an incident number link to about 9% of shootings, against a
+clearance rate the department reports at over 50%. Philadelphia publishes
+shootings with exact times and locations but arrests only as daily counts
+by area; its arrests can be found in Pennsylvania court dockets by incident
+number, but the court portal limits searches to about one a minute. Other
+large cities either publish no arrest table with a case number or
+anonymize the case number.
+
+Both cities publish the block and not the address, so many cases share
+identical coordinates, which a continuous spatial kernel cannot handle
+(the likelihood is unbounded as $\sigma$ goes to zero). I add Gaussian
+noise with a standard deviation of `{python} num(cp["jitter"])` meters to
+each coordinate, about the spread of a uniform position along a block, and
+check how much results depend on the random draw.
+
+```{python}
+#| label: tbl-data
+#| tbl-cap: "The two samples."
+rows = []
+PERIOD = {"shootings": "Jan 2016 to Jun 2026", "carprowl": "Jan 2019 to Jun 2026"}
+DAY = ["at the offense time", "within 1 hour", "1 to 6 hours", "6 to 24 hours"]
+WEEK = ["7 to 30 days", "30 to 180 days", "over 180 days"]
+for c in CRIMES:
+    s, m = S[c], meta[c]
+    rows.append({
+        "": CNAME[c], "Period": PERIOD[c], "Cases": num(m["reports"]), "With location": num(m["n"]),
+        "With an arrest": f"{num(m['arrested'])} ({pct(m['arrested'] / m['n'], 1)})",
+        "Arrest within an hour": pct(delay_share(c, FAST)),
+        "Arrest after a week or more": pct(delay_share(c, WEEK)),
+    })
+show(pd.DataFrame(rows), left=2)
+```
+
+@tbl-data describes the two samples. Arrests are uncommon:
+`{python} pct(meta["shootings"]["arrested"] / meta["shootings"]["n"], 1)` of
+shootings and `{python} pct(meta["carprowl"]["arrested"] / meta["carprowl"]["n"], 1)`
+of car prowls have one. The timing differs.
+`{python} pct(delay_share("carprowl", FAST))` of car prowl arrests are within
+an hour of the offense, people caught in the act. Shooting arrests are
+mostly the product of an investigation:
+`{python} pct(delay_share("shootings", FAST))` come within an hour and
+`{python} pct(delay_share("shootings", WEEK))` a week or more later.
+Seattle's arrest table also records the type of arrest.
+`{python} pct(1 - meta["carprowl"]["booked"] / meta["carprowl"]["arrested"])`
+of car prowl arrests do not end with the person booked into jail (they are
+identified and released, cited, or referred for charges), which lets the
+model ask whether custody is what matters.
+
+```{python}
+#| label: fig-followon
+#| fig-cap: "Later crimes of the same type within 200 meters, per earlier crime per day, by time since the earlier crime. Gray: earlier crimes with no arrest. Blue: earlier crimes with an arrest within a day. The last bin (one to four months later) is the long-run rate at those places. Dashed lines are what the fitted model of the Results section implies: the long-run rate plus the direct triggering expected in each bin, multiplied by $\\kappa$ after an arrest."
+fig, axes = plt.subplots(1, 2, figsize=(8.2, 3.6))
+for ax, c in zip(axes, CRIMES):
+    plots.followon_panel(ax, tab(c, "followon"), CNAME[c], summary=S[c])
+axes[0].set_ylabel("Follow-on crimes per crime per day")
+axes[1].legend(loc="upper right")
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+fo = {c: tab(c, "followon").set_index(["group", "lag_from"]) for c in CRIMES}
+FASTG = "arrest within a day"
+fo_rate = lambda c, g, lag: fo[c].loc[(g, lag), "rate"]
+fo_pairs = lambda c, g, lag: int(fo[c].loc[(g, lag), "pairs"])
+fo_parents = lambda c, g: int(fo[c].loc[(g, 0.0), "parents"])
+# pairs in the first day, and the number the long-run rate would give
+day1 = lambda c, g: fo_pairs(c, g, 0.0) + fo_pairs(c, g, 0.25)
+day1_expected = lambda c, g: fo_rate(c, g, 28.0) * fo_parents(c, g)
+```
+
+@fig-followon shows the pattern the model has to explain, before any
+model. For each crime I count later crimes of the same type within 200
+meters and divide by the time at risk. In the six hours after a car prowl
+with no arrest, further car prowls nearby come at
+`{python} f"{fo_rate('carprowl', 'no arrest', 0.0) / fo_rate('carprowl', 'no arrest', 28.0):.1f}"`
+times the long-run rate at those places, and the excess decays over the
+following days. After a car prowl with an arrest within a day the spike is
+mostly gone
+(`{python} f"{fo_rate('carprowl', FASTG, 0.0) / fo_rate('carprowl', FASTG, 28.0):.1f}"`
+times the long-run rate, from
+`{python} fo_pairs('carprowl', FASTG, 0.0)` pairs).
+
+Chicago shootings show the same shape on a smaller scale. In the six hours
+after a shooting with no arrest, further shootings within 200 meters come
+at `{python} f"{fo_rate('shootings', 'no arrest', 0.0) / fo_rate('shootings', 'no arrest', 28.0):.1f}"`
+times the long-run rate, and in the first day there are
+`{python} num(day1('shootings', 'no arrest'))` such follow-on shootings
+where the long-run rate implies
+`{python} num(day1_expected('shootings', 'no arrest'))`. After the
+`{python} num(fo_parents('shootings', FASTG))` shootings with an arrest
+within a day, `{python} day1('shootings', FASTG)` followed nearby in the
+next day, where `{python} num(day1_expected('shootings', FASTG), 1)` would
+be expected at the long-run rate.
+
+# Results
+
+```{python}
+#| label: tbl-models
+#| tbl-cap: "Model comparison. Log-likelihood, number of parameters, and AIC (lower is better)."
+rows = []
+for c in CRIMES:
+    m = tab(c, "models")
+    for _, r in m.iterrows():
+        rows.append({"": CNAME[c] if r["model"] == m["model"].iloc[0] else "", "Model": r["model"],
+                     "Log-likelihood": num(r["loglik"], 1), "Parameters": int(r["npar"]), "AIC": num(r["aic"], 1)})
+show(pd.DataFrame(rows), left=2)
+```
+
+```{python}
+#| label: tbl-est
+#| tbl-cap: "Estimates from the arrest dampening model, with 95% intervals. The interval for $\\kappa$ is from the profile likelihood; the others are Wald intervals computed on the log scale."
+def est_rows(c):
+    s = S[c]
+    co = tab(c, "coef").query("model == 'main'").set_index("name")
+    kp = s["kernel_par"]
+    out = {
+        "Kernel": s["kernel_name"].capitalize(),
+        "Background neighbors k": str(s["k_nn"]),
+        "Productivity $\\theta$": est_ci(s["theta"], 3),
+        "Fatal shooting multiplier on $\\theta$": est_ci(s["covariate_effect"], 2) if s["covariate_effect"] else "",
+        "Arrest multiplier $\\kappa$": f"{s['kappa']['exp']:.2f} ({s['kappa_profile'][0]:.2f} to {s['kappa_profile'][1]:.2f})",
+        "Test of $\\kappa$ = 1, p-value": pval(s["lr_arrest"]["p"]),
+        "Median lag to a triggered crime": (f"{kp['median_days']:.1f} days" if kp["median_days"] >= 1
+                                             else f"{kp['median_days'] * 24:.1f} hours"),
+        "Spatial spread $\\sigma$ (meters)": est_ci(s["sigma"], 0),
+        "Share of crimes triggered": pct(s["triggered_share"], 1),
+    }
+    return out
+
+
+e = {c: est_rows(c) for c in CRIMES}
+show(pd.DataFrame({"": list(e["shootings"]), CNAME["shootings"]: list(e["shootings"].values()),
+                   CNAME["carprowl"]: list(e["carprowl"].values())}))
+```
+
+For each crime type I fit both temporal kernels with the background's
+nearest-neighbor count $k$ at 5, 10, 15, and 30, and take the combination
+with the highest likelihood (@tbl-grid in the appendix has all of them).
+@tbl-models compares models at that choice and @tbl-est gives the
+estimates.
+
+## Car prowls
+
+Car prowls are self-exciting, modestly. The self-exciting model improves
+the log-likelihood over the background alone by
+`{python} num(tab("carprowl", "models").set_index("model").loc["Self-exciting, no arrest effect", "loglik"] - tab("carprowl", "models").set_index("model").loc["Poisson background", "loglik"])`
+with a handful of parameters, and
+`{python} pct(cp["triggered_share"], 1)` of car prowls are attributed to an
+earlier one. The triggering is fast and local. The power law kernel fits
+far better than the exponential, half of triggered car prowls come within
+`{python} f"{cp['kernel_par']['median_days'] * 24:.0f}"` hours of the one
+that triggered them, and the spatial spread is
+`{python} num(cp["sigma"]["exp"])` meters, about a block. This is what a
+spree looks like.
+
+Arrests cut it off. The estimate of $\kappa$ is
+`{python} f"{cp['kappa']['exp']:.2f}"` (95% profile interval
+`{python} f"{cp['kappa_profile'][0]:.2f}"` to
+`{python} f"{cp['kappa_profile'][1]:.2f}"`): after an arrest, a car prowl
+triggers about `{python} pct(1 - cp['kappa']['exp'])` fewer follow-on car
+prowls than it otherwise would have from that point. The likelihood ratio
+test against no arrest effect has a p-value
+`{python} pval(cp["lr_arrest"]["p"])` (@fig-profile). Because nearly all
+car prowl arrests are made within the hour, the fixed-mark model gives a
+similar answer here
+(`{python} f"{cp['kappa_static']['exp']:.2f}"`); the two would diverge in
+data with more follow-up arrests.
+
+```{python}
+#| label: fig-profile
+#| fig-cap: "Profile likelihood for the arrest multiplier $\\kappa$: twice the drop in log-likelihood from its maximum. Values below the dotted line are inside the 95% interval. The dashed line marks no arrest effect."
+fig, axes = plt.subplots(1, 2, figsize=(8.2, 3.1), sharey=True)
+for ax, c in zip(axes, CRIMES):
+    plots.profile_panel(ax, S[c], CNAME[c])
+axes[0].set_ylabel("2 x drop in log-likelihood")
+plt.tight_layout()
+plt.show()
+```
+
+Does it matter whether the person goes to jail?
+`{python} num(cp["booked"])` of the `{python} num(cp["arrests"])` car prowl
+arrests ended in a booking; the rest were identified and released, cited,
+or referred for charges. Letting $\kappa$ differ between the two gives
+`{python} f"{cp['kappa_not_booked']['exp']:.2f}"` for arrests without a
+booking and an estimate at zero for arrests with one, but the likelihood
+ratio test of a difference has a p-value of
+`{python} pval(cp["lr_booked"]["p"])`. The data cannot tell the two apart.
+Both kinds of arrest are followed by far fewer car prowls than no arrest,
+which fits an offender who stops for the night once caught, in custody or
+not.
+
+## Shootings
+
+```{python}
+shv = json.load(open(R / "models" / "shootings_violent_summary.json"))
+sh_models = tab("shootings", "models").set_index("model")["loglik"]
+fast_share = delay_share("shootings", FAST)
+```
+
+Chicago shootings are self-exciting, but only slightly. The self-exciting
+model improves the log-likelihood over the background alone by
+`{python} num(sh_models["Self-exciting, no arrest effect"] - sh_models["Poisson background"])`,
+and it attributes `{python} pct(sh["triggered_share"], 1)` of shooting
+incidents to an earlier one, with productivity
+`{python} f"{sh['theta']['exp']:.3f}"`. The triggering is fast and spread
+out: half of triggered shootings come within
+`{python} f"{sh['kernel_par']['median_days'] * 24 * 60:.0f}"` minutes of the
+earlier one, and the spatial spread is
+`{python} num(sh["sigma"]["exp"])` meters. That looks less like repeat
+shootings at one address than like an exchange of gunfire, or a retaliation
+the same night, a few blocks away. Fatal shootings trigger fewer follow-on
+shootings than non-fatal ones (multiplier
+`{python} est_ci(sh["covariate_effect"], 2)`). This fits @loeffler2018, who
+found with acoustic gunshot detection data that gun violence does spread,
+but only slightly. One caution on scope: an incident with several victims
+counts once here, and retaliation that follows social ties across the city
+[@papachristos2009; @green2017] would not show up as clustering in space.
+
+The data cannot tell whether arrests stop follow-on shootings. The estimate
+of $\kappa$ is `{python} f"{sh['kappa']['exp']:.2f}"`, with a 95% profile
+interval of `{python} f"{sh['kappa_profile'][0]:.2f}"` to
+`{python} f"{sh['kappa_profile'][1]:.2f}"` that includes no effect
+(p-value `{python} pval(sh["lr_arrest"]["p"])`). Counting only arrests with
+a violent charge or on a warrant gives
+`{python} f"{shv['kappa']['exp']:.2f}"`
+(`{python} f"{shv['kappa_profile'][0]:.2f}"` to
+`{python} f"{shv['kappa_profile'][1]:.2f}"`, p-value
+`{python} pval(shv["lr_arrest"]["p"])`), and the estimate moves with the
+random draw used to unmask locations
+(`{python} " and ".join(f"{j['kappa']:.2f}" for j in sh["jitter_check"])`
+with two other draws). The reason is in the timing. With half of the
+triggering over within about an hour, only an arrest in that hour can
+remove much of it, and only `{python} pct(fast_share)` of shooting arrests
+come that fast; the median arrest is
+`{python} num(sh["median_delay_days"])` days after the shooting. The
+`{python} num(sh["arrests"])` shootings with an arrest by the end of June
+2026 would trigger about
+`{python} num(sh["arrests"] * sh["theta"]["exp"])` shootings between them
+with no arrest effect, most of them before any arrest.
+
+## Crimes prevented
+
+```{python}
+#| label: tbl-prevented
+#| tbl-cap: "Estimated crimes prevented by arrests (Chicago shootings January 2016 through June 2026, Seattle car prowls January 2019 through June 2026). Direct: follow-on crimes of the arrested crimes. Total: including the crimes those would have triggered. Intervals are 95% prediction intervals."
+rows = []
+for c in CRIMES:
+    s = S[c]
+    p = s["prevented"]
+    rows.append({
+        "": CNAME[c], "Crimes": num(s["n"]), "Arrests": num(s["arrests"]),
+        "Prevented, direct": num(p["direct"], 1),
+        "Prevented, total": f"{num(p['total'], 1)} ({ci(s['prevented_prediction'])})",
+        "Per 100 arrests": num(100 * p["per_arrest"], 1),
+        "Share of crimes": pct(p["share"], 2),
+    })
+show(pd.DataFrame(rows))
+```
+
+```{python}
+#| label: fig-curve
+#| fig-cap: "Estimated crimes prevented by one arrest, by how long after the crime the arrest is made (follow-on crimes and their descendants; bands are the estimates at the two ends of the 95% profile interval for $\\kappa$)."
+fig, axes = plt.subplots(1, 2, figsize=(8.2, 3.5))
+for ax, c in zip(axes, CRIMES):
+    plots.curve_panel(ax, tab(c, "curve"), CNAME[c])
+axes[0].set_ylabel("Crimes prevented per arrest")
+plt.tight_layout()
+plt.show()
+```
+
+@tbl-prevented turns the estimates into counts. The
+`{python} num(cp["arrests"])` car prowl arrests prevented an estimated
+`{python} num(cp["prevented"]["total"])` car prowls (95% interval
+`{python} ci(cp["prevented_prediction"], 0)`), about
+`{python} num(100 * cp["prevented"]["per_arrest"], 0)` for every 100 arrests.
+The effect of an arrest is large in relative terms and small in absolute
+terms, and the reason is in the two numbers that multiply together. A car
+prowl triggers `{python} f"{cp['theta']['exp']:.2f}"` others on average, so
+that is the most an arrest at the scene can prevent directly, and only
+`{python} pct(meta["carprowl"]["arrested"] / meta["carprowl"]["n"], 1)` of
+car prowls have an arrest. Against
+`{python} num(cp["n"])` car prowls in the period, the chains broken by
+arrest are `{python} pct(cp["prevented"]["share"], 2)`.
+
+@fig-curve shows how fast the value of an arrest decays. For car prowls an
+arrest at the scene prevents about
+`{python} f"{tab('carprowl', 'curve')['prevented'].iloc[0]:.3f}"` crimes; one
+made a day later prevents
+`{python} f"{np.interp(1.0, tab('carprowl', 'curve')['delay'], tab('carprowl', 'curve')['prevented']):.3f}"`,
+because by then
+`{python} pct(1 - np.interp(1.0, tab('carprowl', 'kernel')['delay'], tab('carprowl', 'kernel')['remaining']))`
+of the follow-on crimes have already happened. For shootings the estimate is
+`{python} num(sh["prevented"]["total"])` shootings prevented in ten and a
+half years, with an interval (`{python} ci(sh["prevented_prediction"], 0)`)
+that includes zero, and the curve falls to nothing within a few hours.
+
+These counts are only the crimes prevented through this channel: the
+short-run chain that follows a specific crime. An arrest that incapacitates
+a prolific offender for months, or deters others, prevents crimes the
+triggering kernel never sees.
+
+## Checks
+
+The dashed lines in @fig-followon are a check on fit: the follow-on rates
+the fitted model implies, against the raw rates. For car prowls the model
+reproduces the spike in the first six hours and its absence after an
+arrest. It puts
+`{python} f"{fo_rate('carprowl', 'no arrest', 0.0):.2f}"` observed against
+`{python} f"{S['carprowl']['prevented']['n0'] * (1 - np.exp(-200**2 / (2 * cp['sigma']['exp']**2))) * (1 - plots.kernel_survival(cp, 0.25)) / 0.25 + fo_rate('carprowl', 'no arrest', 28.0):.2f}"`
+implied in that first bin, and it is low over the next two weeks, where the
+raw rate stays a little above the long-run rate longer than a single kernel
+allows. For shootings the model accounts for only part of the excess in
+the first six hours within 200 meters, since its fitted spatial spread is
+wider than that. The usual residual check for point processes, rescaling time by
+the fitted citywide intensity so that gaps between crimes should be
+Exponential(1) [@ogata1988; @brown2002], is not informative here.
+`{python} pct(cp["on_the_hour"])` of car prowl offense times are recorded
+on the hour and `{python} pct(cp["tie_share"])` of car prowls share a
+timestamp with the one before, so the residuals fail in the same
+way for every model (Kolmogorov-Smirnov distance
+`{python} f"{S['carprowl']['residuals']['main']['ks']:.2f}"` for the
+arrest model and
+`{python} f"{S['carprowl']['residuals']['Poisson background']['ks']:.2f}"`
+for the background alone). Crimes with identical recorded times also
+cannot be ordered, so neither counts as triggering the other, which makes
+the estimate of $\theta$ conservative.
+
+The car prowl estimates do not depend on the random draw used to unmask
+locations: with two other draws $\kappa$ is
+`{python} " and ".join(f"{j['kappa']:.2f}" for j in cp["jitter_check"])`
+and crimes prevented
+`{python} " and ".join(num(j["prevented"]) for j in cp["jitter_check"])`.
+They do depend, as expected, on how smooth the background is (@tbl-grid).
+A smoother background (larger $k$) hands more clustering to the triggering
+term, raising $\theta$ and with it the count of crimes prevented. For car
+prowls $\kappa$ itself stays between
+`{python} f"{tab('carprowl', 'grid')['kappa'].min():.2f}"` and
+`{python} f"{tab('carprowl', 'grid')['kappa'].max():.2f}"` across all
+eight combinations, and crimes prevented between
+`{python} num(tab('carprowl', 'grid')['prevented'].min())` and
+`{python} num(tab('carprowl', 'grid')['prevented'].max())`.
+
+# Discussion
+
+The arrest term is a small change to a standard model, and it answers a
+question the standard model cannot: of the crimes a crime would have
+triggered, how many did the arrest stop? The estimate has a direct reading
+for police. For car prowls in Seattle, an arrest at the scene all but ends
+the elevated risk that follows a car prowl. A patrol response that catches
+someone in the act is worth far more, for this purpose, than an arrest a
+week later, because the risk the arrest can remove is gone within a day.
+
+It also gives a sober accounting of scale. Near repeat patterns are
+sometimes presented as if interrupting them would move crime totals. Here
+the chains are short. If a car prowl triggers
+`{python} f"{cp['theta']['exp']:.2f}"` others, then even arresting someone
+at the scene of every car prowl would prevent, through this channel, fewer
+than one in ten. The value of arrests for car prowls has to come mostly from
+somewhere else, such as incapacitating people who offend at a high rate for
+a long time or deterrence from the certainty of being caught [@nagin2013],
+neither of which a triggering kernel measures. The shooting result says the
+same thing more bluntly: with shootings in Chicago close to independent
+given place and season, there is little chain in space and time to break.
+
+Several limitations deserve mention. The estimate of $\kappa$ is
+observational. Arrested crimes are not a random sample, and I have only
+crude covariates to adjust for the difference; the simulation shows the
+direction of the bias when a trait raises both productivity and the chance
+of arrest. The arrest link is to one report, and an arrest that should be
+credited against a string of an offender's crimes is credited against one.
+Chicago's arrest table gives the case number for about 70% of arrests, so
+some arrests for shootings are missing; the arrest shares match published
+arrest rates closely but run a few points low for homicides, and a missing
+arrest biases the estimate of $\kappa$ toward one. Both cities publish the
+block and not the address, and Seattle's car prowl times are imprecise for
+crimes discovered after the fact.
+And the model's kernels are simple: one decay rate and one spatial scale for
+everything, where sprees within a night and returns to the same place weeks
+later are probably different processes.
+
+Natural extensions follow from those. With offender identifiers, arrests
+could dampen the kernels of all of a person's linked crimes at once. With
+gang or group data, the retaliation channel for shootings could be modeled
+on a network instead of in space [@green2017], where the question of whether
+an arrest satisfies or provokes the other side has more bite. The same
+dampening term would also work for any intervention attached to a crime
+with a timestamp, such as a violence interrupter's response [@park2021] or a
+victim services contact. The data requirement is the binding constraint.
+Few cities publish which crime had an arrest and when, and of the large
+cities I checked only Chicago does so for shootings completely enough to
+use. Incident-based records reported to the FBI's National Incident-Based
+Reporting System link arrests to offenses for thousands of agencies, but
+without locations; a version of the model in time alone could use them,
+and I plan to add that analysis.
+
+# References
+
+::: {#refs}
+:::
+
+\clearpage
+
+# Appendix: sensitivity to the kernel and background {.unnumbered}
+
+```{python}
+#| label: tbl-grid
+#| tbl-cap: "Fits across temporal kernels and background smoothing ($k$ nearest neighbors; the median bandwidth is in meters). The row with the highest log-likelihood for each crime type is the one used in the paper."
+rows = []
+for c in CRIMES:
+    g = tab(c, "grid")
+    best = g["loglik"].idxmax()
+    for i, r in g.iterrows():
+        rows.append({
+            "": CNAME[c] if i == 0 else "", "Kernel": {"exp": "Exponential", "lomax": "Power law"}[r["kernel"]],
+            "k": int(r["k"]), "Bandwidth": num(r["median_bandwidth"]),
+            "Log-likelihood": num(r["loglik"], 1) + (" *" if i == best else ""),
+            "$\\theta$": f"{r['theta']:.3f}", "$\\kappa$": f"{r['kappa']:.2f}", "p ($\\kappa$ = 1)": pval(r["lr_p"]),
+            "Median lag (days)": f"{r['median_days']:.2f}", "$\\sigma$": num(r["sigma"]),
+            "Prevented": num(r["prevented"], 1),
+        })
+show(pd.DataFrame(rows), left=2)
+```

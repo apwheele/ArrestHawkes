@@ -1,0 +1,138 @@
+{
+ "start": "2016-01-01",
+ "end": "2026-07-01",
+ "victim_rows": 34575,
+ "arrest_rows": 409074,
+ "chicago_shootings": {
+  "reports": 27386,
+  "located": {
+   "fatal": [
+    5643,
+    5643
+   ],
+   "injury": [
+    21743,
+    21742
+   ]
+  },
+  "n": 27385,
+  "fatal": 5643,
+  "arrested": 2742,
+  "arrested_fatal": 1133,
+  "arrested_injury": 1609,
+  "first_arrest_violent": 2332,
+  "arrest_before_offense": 39,
+  "arrest_share_by_year": {
+   "2016": {
+    "fatal": 0.178,
+    "injury": 0.056
+   },
+   "2017": {
+    "fatal": 0.142,
+    "injury": 0.072
+   },
+   "2018": {
+    "fatal": 0.179,
+    "injury": 0.082
+   },
+   "2019": {
+    "fatal": 0.162,
+    "injury": 0.09
+   },
+   "2020": {
+    "fatal": 0.247,
+    "injury": 0.059
+   },
+   "2021": {
+    "fatal": 0.196,
+    "injury": 0.052
+   },
+   "2022": {
+    "fatal": 0.233,
+    "injury": 0.069
+   },
+   "2023": {
+    "fatal": 0.208,
+    "injury": 0.076
+   },
+   "2024": {
+    "fatal": 0.202,
+    "injury": 0.097
+   },
+   "2025": {
+    "fatal": 0.282,
+    "injury": 0.122
+   },
+   "2026": {
+    "fatal": 0.177,
+    "injury": 0.129
+   }
+  }
+ },
+ "chicago_shootings_violent": {
+  "reports": 27386,
+  "located": {
+   "fatal": [
+    5643,
+    5643
+   ],
+   "injury": [
+    21743,
+    21742
+   ]
+  },
+  "n": 27385,
+  "fatal": 5643,
+  "arrested": 2332,
+  "arrested_fatal": 1032,
+  "arrested_injury": 1300,
+  "first_arrest_violent": 2332,
+  "arrest_before_offense": 33,
+  "arrest_share_by_year": {
+   "2016": {
+    "fatal": 0.171,
+    "injury": 0.046
+   },
+   "2017": {
+    "fatal": 0.131,
+    "injury": 0.065
+   },
+   "2018": {
+    "fatal": 0.161,
+    "injury": 0.066
+   },
+   "2019": {
+    "fatal": 0.148,
+    "injury": 0.072
+   },
+   "2020": {
+    "fatal": 0.22,
+    "injury": 0.047
+   },
+   "2021": {
+    "fatal": 0.184,
+    "injury": 0.041
+   },
+   "2022": {
+    "fatal": 0.201,
+    "injury": 0.052
+   },
+   "2023": {
+    "fatal": 0.189,
+    "injury": 0.061
+   },
+   "2024": {
+    "fatal": 0.184,
+    "injury": 0.073
+   },
+   "2025": {
+    "fatal": 0.255,
+    "injury": 0.1
+   },
+   "2026": {
+    "fatal": 0.166,
+    "injury": 0.109
+   }
+  }
+ }
+}
