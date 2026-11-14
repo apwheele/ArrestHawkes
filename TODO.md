@@ -9,9 +9,9 @@ The first unchecked item is where to resume.
 - [x] `scripts/01_seattle_data.py` -- SPD car prowls + arrests, 2019-01-01 to 2026-06-30, downloaded 2026-11-13
 - [x] `scripts/02_chicago_data.py` -- Chicago shooting victims + arrests, 2016-01-01 to 2026-06-30, downloaded 2026-11-14
 - [x] `scripts/03_simulation.py all 0 99` -- 6 scenarios x 100 worlds, done with corrected profile intervals
-- [ ] `scripts/04_models.py shootings`, `shootings_violent`, `carprowl` (car prowls done)
-- [ ] paper.qmd: shooting results, abstract from the Chicago results; render pdf/docx/md
-- [ ] commit, create private GitHub repo apwheele/ArrestHawkes
+- [x] `scripts/04_models.py shootings`, `shootings_violent`, `carprowl`
+- [x] paper.qmd written and rendered (pdf/docx/md); abstract numbers are hard-coded, update if results change
+- [x] private GitHub repo apwheele/ArrestHawkes created 2026-11-14 (not yet reviewed by Andrew)
 - [ ] later (Andrew's plan): a temporal-only version on NIBRS incident + arrest segments
 
 ## Ideas not done
