@@ -9,7 +9,7 @@ a slow one. The fitted model gives the number of follow-on crimes each
 arrest prevented and the total across arrests, including the crimes those
 prevented crimes would have triggered.
 
-The paper is `paper.pdf` (also built as `paper.docx` and `paper.md`), from
+The paper is `paper.pdf` (also built as `paper.md`), from
 `paper.qmd` and `references.bib`. It has the math, simulations where the
 true number of crimes prevented is known, and two applications: shootings
 in Chicago, Illinois (January 2016 through June 2026) and car prowls
@@ -141,7 +141,8 @@ Things to know:
 - `data/` -- Seattle car prowls and Chicago shootings with linked arrests.
 - `results/` -- simulation rows and model outputs read by the paper.
 - `tests/` -- unit tests (gradient checks, parameter recovery, bookkeeping).
-- `filters/` -- pandoc Lua filters for the Markdown and Word builds.
+- `filters/` -- pandoc Lua filter for the Markdown build.
+- `GoogleReview.md` -- a review of the paper from Google's Deep Research, kept as received.
 
 ## License
 

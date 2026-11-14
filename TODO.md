@@ -10,8 +10,12 @@ The first unchecked item is where to resume.
 - [x] `scripts/02_chicago_data.py` -- Chicago shooting victims + arrests, 2016-01-01 to 2026-06-30, downloaded 2026-11-14
 - [x] `scripts/03_simulation.py all 0 99` -- 6 scenarios x 100 worlds, done with corrected profile intervals
 - [x] `scripts/04_models.py shootings`, `shootings_violent`, `carprowl`
-- [x] paper.qmd written and rendered (pdf/docx/md); abstract numbers are hard-coded, update if results change
-- [x] private GitHub repo apwheele/ArrestHawkes created 2026-11-14 (not yet reviewed by Andrew)
+- [x] paper.qmd written and rendered (pdf/md; Word dropped 2026-11-14 at Andrew's request); abstract
+  numbers are hard-coded, update if results change. PDF tables are raw LaTeX from `show()` (see its
+  docstring); has AI disclosure and replication sections.
+- [x] GitHub repo apwheele/ArrestHawkes created 2026-11-14 (private), made public 2026-11-14 at Andrew's
+  request. `GoogleReview.md` is Google Deep Research's review of the paper, committed as received (do
+  not edit); its points are not yet addressed in the paper.
 - [ ] later (Andrew's plan): a temporal-only version on NIBRS incident + arrest segments
 
 ## Ideas not done
@@ -33,7 +37,11 @@ The first unchecked item is where to resume.
 - Main Chicago spec = any arrest under the case number; sensitivity = only violent or warrant charges
   (~15% of linked shootings have only gun/drug/other charges, possibly the victim).
 - Rejected for shootings, with the reason:
-  - Seattle: public file redacts the location of nearly all fatal shootings.
+  - Seattle: public file redacts the location of nearly all fatal shootings. Checked 2026-11-14 for
+    a time-only version too (Andrew asked): fails the arrest link. Homicides Jan 1-Sep 7 2023: open
+    data 47, 16 (34%) with a linked arrest by then; KING 5 counted 57 and about half (27) with an
+    arrest. Full 2023: 61 in open data vs 73-74 reported. Only 80% of murder-charge arrests carry a
+    homicide report number. Fatal shooting times are exact (not coarsened), arrests 29%/yr 2019-24.
   - Dallas: incident status says 36-60% of gun homicides cleared by arrest, but only half of
     cleared-by-arrest incidents appear in the arrest table (the only arrest date), few homicides.
   - Baltimore: arrests with an incident number link to ~9% of shootings vs >50% reported clearance.
@@ -54,6 +62,10 @@ The first unchecked item is where to resume.
 - Multi-start fitting; profile likelihood intervals for kappa; crimes prevented gets a prediction
   interval (profile interval widened by the branching process variance).
 - Fast-arrest comparison group in the follow-on figure = arrest within a day.
+- Regression form (paper eq-regression, Andrew's request 2026-11-14): lambda = mu + beta1 X1 + beta2 X2,
+  X1 = kernel sum over all earlier crimes, X2 = same sum over crimes already arrested; beta1 = theta,
+  beta2 = -theta(1 - kappa). 04_models.py writes {name}_regression.csv (beta1 Wald on log scale, beta2
+  at the kappa profile ends); paper table tbl-reg. Identity link, not log (log is a different model).
 - The car prowl compensator once built a 66k x 66k matrix (35 GB) and Claude Code killed the jobs for
   low memory; chunks are now bounded by rows (test in tests/).
 - CPU: runs kept to two threads (Andrew's 4-core machine).

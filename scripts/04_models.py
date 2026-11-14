@@ -237,6 +237,27 @@ ptrig = model.triggered_prob(main.par, ev)
 log(f"prevented: total {pv['total']:.1f} (profile {prof_total[0]:.1f} to {prof_total[1]:.1f}; "
     f"prediction {pred_total[0]:.1f} to {pred_total[1]:.1f})")
 
+# The same fit written as a regression on two running sums (the paper's
+# regression form): lambda = mu + beta1 * sum over earlier crimes + beta2 * sum
+# over crimes already arrested, with beta1 = theta and beta2 = -theta (1 - kappa),
+# one pair per productivity group. beta1 gets a Wald interval on the log
+# scale; beta2 takes its values at the two ends of the profile interval for
+# kappa, like the count of crimes prevented.
+px = ev.X.shape[1]
+groups = [("all", 0.0)] if px == 1 else [("reference", 0.0), (CFG["covariate"], 1.0)]
+gam = slice(K, K + px)
+reg = []
+for gname, xval in groups:
+    xv = np.r_[1.0, [xval] * (px - 1)]
+    lb1 = xv @ main.par[gam]
+    se1 = np.sqrt(xv @ main.cov[gam, gam] @ xv)
+    b2 = lambda par: -np.exp(xv @ par[gam]) * (1 - np.exp(par[K + px]))
+    b2_ends = sorted([b2(prof["par_low"]), b2(prof["par_high"])])
+    reg += [dict(term="beta1", group=gname, est=np.exp(lb1), low=np.exp(lb1 - 1.96 * se1), high=np.exp(lb1 + 1.96 * se1)),
+            dict(term="beta2", group=gname, est=b2(main.par), low=b2_ends[0], high=b2_ends[1])]
+pd.DataFrame(reg).to_csv(OUT / f"{NAME}_regression.csv", index=False)
+log("regression form: " + ", ".join(f"{r['term']}[{r['group']}] {r['est']:.4f}" for r in reg))
+
 # ---------------------------------------------------------------------------
 # 5. Residuals (time rescaling) and sensitivity to the location jitter
 

@@ -36,18 +36,18 @@ format:
     documentclass: article
     geometry: margin=1in
     number-sections: true
+    # tells show() to write LaTeX tables (matplotlib still saves PNGs here)
+    fig-format: pdf
     header-includes:
       - \usepackage{float}
+      - \usepackage{booktabs}
+      - \usepackage{makecell}
+      - \newsavebox{\tablebox}
   gfm:
     fig-dpi: 150
     wrap: none
     filters:
       - filters/github-math.lua
-  docx:
-    fig-dpi: 150
-    number-sections: true
-    filters:
-      - filters/docx-clearpage.lua
 execute:
   echo: false
   warning: false
@@ -58,6 +58,7 @@ jupyter: arresthawkes
 ```{python}
 #| label: setup
 import json
+import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -72,11 +73,66 @@ R = Path("results")
 num = lambda v, d=0: f"{v:,.{d}f}"
 pct = lambda v, d=0: f"{v * 100:.{d}f}%"
 pval = lambda p: "< 0.001" if p < 0.001 else f"{p:.3f}"
-def show(df, left=1):
-    """Markdown table; cells are kept as written (no number re-parsing), the
-    first `left` columns left-aligned and the rest right-aligned."""
-    align = ["left"] * left + ["right"] * (df.shape[1] - left)
-    return Markdown(df.astype(str).to_markdown(index=False, disable_numparse=True, colalign=align))
+# Quarto passes the figure format to the kernel, and only the PDF format sets
+# it to pdf, which is how a cell can tell it is rendering the PDF.
+PDF = os.environ.get("QUARTO_FIG_FORMAT") == "pdf"
+
+
+def _tex(s, align="l"):
+    """LaTeX for one cell: special characters escaped outside $...$, and a
+    line break (\\n) kept with makecell."""
+    parts = str(s).split("$")
+    for i in range(0, len(parts), 2):
+        for a, b in (("%", r"\%"), ("&", r"\&"), ("#", r"\#"), ("_", r"\_")):
+            parts[i] = parts[i].replace(a, b)
+    s = "$".join(parts)
+    if "\n" in s:
+        s = r"\makecell[" + align[0] + "b]{" + s.replace("\n", r"\\") + "}"
+    return s
+
+
+def show(df, left=1, align=None, group=False):
+    """A table with cells kept as written (no number re-parsing). The first
+    `left` columns are left-aligned and the rest right-aligned, unless `align`
+    gives a LaTeX column type for each column (p{...} is left-aligned in the
+    other formats). A \\n in a header breaks the line in the PDF. With
+    `group`, the first column labels groups of rows: a heading row in the PDF,
+    and only on the first row of the group elsewhere.
+
+    The PDF gets a booktabs tabular, shrunk if it is wider than the text.
+    Pandoc's own LaTeX tables are longtables, which do not float and give
+    fixed-width wrapping columns to any table wider than 72 characters."""
+    df = df.astype(str)
+    align = align or ["l"] * left + ["r"] * (df.shape[1] - left)
+    if not PDF:
+        if group:
+            first = df.iloc[:, 0]
+            df.iloc[:, 0] = first.where(first != first.shift(), "")
+        df.columns = [c.replace("-\n", "-").replace("\n", " ") for c in df.columns]
+        md = ["right" if a == "r" else "left" for a in align]
+        return Markdown(df.to_markdown(index=False, disable_numparse=True, colalign=md))
+    if group:
+        labels, df, align = df.iloc[:, 0], df.iloc[:, 1:], align[1:]
+    ncol = df.shape[1]
+    lines = [r"{\small\setlength{\tabcolsep}{5pt}%", r"\begin{lrbox}{\tablebox}%",
+             r"\begin{tabular}{@{}" + "".join(align) + "@{}}", r"\toprule",
+             " & ".join(_tex(c, a) for c, a in zip(df.columns, align)) + r" \\", r"\midrule"]
+    last = None
+    for i in range(len(df)):
+        if group and labels.iloc[i] not in ("", last):
+            if last is not None:
+                lines.append(r"\addlinespace")
+            lines.append(r"\multicolumn{" + str(ncol) + r"}{@{}l}{\textit{" + _tex(labels.iloc[i]) + r"}} \\")
+            last = labels.iloc[i]
+        cells = [_tex(v, a) for v, a in zip(df.iloc[i], align)]
+        if group:
+            cells[0] = r"\quad " + cells[0]
+        lines.append(" & ".join(cells) + r" \\")
+    # shrink to the text width only if wider (adjustbox's max width would
+    # pick up the template's default image size and shrink every table)
+    lines += [r"\bottomrule", r"\end{tabular}%", r"\end{lrbox}%",
+              r"\ifdim\wd\tablebox>\linewidth\resizebox{\linewidth}{!}{\usebox{\tablebox}}\else\usebox{\tablebox}\fi}"]
+    return Markdown("```{=latex}\n" + "\n".join(lines) + "\n```")
 CRIMES = ["shootings", "carprowl"]
 CNAME = {"shootings": "Shootings (Chicago)", "carprowl": "Car prowls (Seattle)"}
 
@@ -233,6 +289,30 @@ processes, where events subtract from the intensity, needs a nonlinear link
 to keep the intensity positive and complicates estimation
 [@bonnet2021]; scaling a crime's own kernel avoids that.
 
+With a single $\theta$ and $\kappa$ the model can be written as a
+regression of the crime rate on two running sums,
+
+$$
+\lambda(t, s) = \mu(t, s)
+  + \beta_1 \sum_{i:\, t_i < t} g(t - t_i)\, h(s - s_i)
+  + \beta_2 \sum_{i:\, a_i < t} g(t - t_i)\, h(s - s_i),
+$$ {#eq-regression}
+
+where $\beta_1 = \theta$ and $\beta_2 = -\theta (1 - \kappa)$. The first sum
+is the usual self-exciting term over every earlier crime. The second is the
+same sum over only the crimes whose arrest has already happened, so it
+measures how much of the current excitation comes from arrested crimes.
+$\beta_2 = 0$ is no arrest effect, $\beta_2 = -\beta_1$ is an arrest that
+ends the chain, and $\kappa = 1 + \beta_2 / \beta_1$. With covariates each
+sum splits by group, one coefficient per group (@tbl-reg gives the fitted
+values). For counts $Y$ in short
+time bins and a fixed kernel this is a Poisson regression with an identity
+link, $\mathrm{E}[Y] = \mu + \beta_1 X_1 + \beta_2 X_2$. A log link,
+$\log \mathrm{E}[Y] = \log \mu + \beta_1 X_1 + \beta_2 X_2$, is a different
+model: each past crime would multiply the whole rate, background included,
+instead of adding its own offspring, and the counts of triggered and
+prevented crimes below would lose their closed forms.
+
 ```{python}
 #| label: fig-schematic
 #| fig-cap: "The arrest term. A crime triggers follow-on crimes at a rate that decays with time (dashed). An arrest multiplies the remaining rate by $\\kappa$ (here 0.3), and the shaded area is the expected number of follow-on crimes the arrest prevents. An arrest made sooner removes more."
@@ -259,10 +339,16 @@ delay cuts what the arrest can prevent in half.
 
 What $\kappa$ picks up depends on the crime. For a spree, where follow-on
 crimes are the same person continuing, the arrest incapacitates and
-$\kappa$ should be near zero if the right person is in custody. For
-retaliatory violence the follow-on crime is committed by someone else, and
-an arrest may or may not satisfy the other side [@papachristos2009], so
-$\kappa$ could be anywhere, in principle even above one.
+$\kappa$ should be near zero if the right person is in custody. Sprees are
+not the only way an arrest can break a chain. For shootings much of the
+follow-on violence is retaliation, committed by someone else, often on the
+victim's side [@papachristos2009]. An arrest can prevent that too. It takes
+the shooter, who is both the target of retaliation and a likely shooter in
+the next exchange, off the street, and a case the courts are handling can
+stand in for the street justice the other side would otherwise seek. It
+could also go the other way if the arrest is read as one side cooperating
+with the police. So for shootings $\kappa$ below one is plausible but less
+certain than for a spree, and in principle it could be above one.
 
 ## Why the arrest has to enter at the time it happens
 
@@ -432,11 +518,11 @@ for scen in SCEN:
         r = simsum.loc[(scen, meth)]
         f = lambda v: "" if np.isnan(v) else pct(v)
         rows.append({
-            "Scenario": SCEN[scen], "Method": METH[meth], "True $\\kappa$": f"{r['ktrue']:.1f}",
-            "Median $\\kappa$": f"{r['kmed']:.2f}", "Reject $\\kappa$ = 1": pct(r["reject"]), "Cover $\\kappa$": f(r["cover_k"]),
-            "Prevented, true": num(r["truth"]), "Prevented, est.": num(r["est"]), "Cover prevented": f(r["cover"]),
+            "Scenario": SCEN[scen], "Method": METH[meth], "True\n$\\kappa$": f"{r['ktrue']:.1f}",
+            "Median\n$\\kappa$": f"{r['kmed']:.2f}", "Reject\n$\\kappa$ = 1": pct(r["reject"]), "Cover\n$\\kappa$": f(r["cover_k"]),
+            "Prevented,\ntrue": num(r["truth"]), "Prevented,\nestimated": num(r["est"]), "Cover\nprevented": f(r["cover"]),
         })
-show(pd.DataFrame(rows), left=2)
+show(pd.DataFrame(rows), left=2, group=True)
 ```
 
 ```{python}
@@ -557,7 +643,8 @@ rows = [
      "Open data, violent charge": pct(sum(yv[str(y)]["injury"] for y in range(2018, 2025)) / 7),
      "Published": "1,200 of more than 19,000 victims, about 6% (Sun-Times)"},
 ]
-show(pd.DataFrame(rows), left=2)
+rows = [{k.replace("Open data, ", "Open data,\n"): v for k, v in r.items()} for r in rows]
+show(pd.DataFrame(rows), align=["l", "l", "r", "r", r"p{2.4in}"])
 ```
 
 @tbl-check compares the arrest share in the open data with arrest rates
@@ -585,7 +672,12 @@ same number, and an arrest logged shortly before the offense time
 treated as made at the scene.
 
 *Cities that did not work.* Seattle also flags shootings, but its public
-file redacts the location of nearly all fatal shootings. In Dallas, the
+file redacts the location of nearly all fatal shootings. Its arrest link
+also falls short, which rules out even an analysis in time alone. For
+homicides from January 1 to September 7, 2023, the open data have 47, of
+which 16 (34%) had a linked arrest by that date, where KING 5 counted 57
+homicides by that date and about half with an arrest [@king52023]. In
+Dallas, the
 incident table's own case status says that 36% to 60% of gun homicides
 each year were cleared by arrest, but only half of the incidents with that
 status appear in the public arrest table, the only source of an arrest
@@ -615,10 +707,10 @@ WEEK = ["7 to 30 days", "30 to 180 days", "over 180 days"]
 for c in CRIMES:
     s, m = S[c], meta[c]
     rows.append({
-        "": CNAME[c], "Period": PERIOD[c], "Cases": num(m["reports"]), "With location": num(m["n"]),
-        "With an arrest": f"{num(m['arrested'])} ({pct(m['arrested'] / m['n'], 1)})",
-        "Arrest within an hour": pct(delay_share(c, FAST)),
-        "Arrest after a week or more": pct(delay_share(c, WEEK)),
+        "": CNAME[c], "Period": PERIOD[c], "Cases": num(m["reports"]), "With\nlocation": num(m["n"]),
+        "With an\narrest": f"{num(m['arrested'])} ({pct(m['arrested'] / m['n'], 1)})",
+        "Arrest within\nan hour": pct(delay_share(c, FAST)),
+        "Arrest after a\nweek or more": pct(delay_share(c, WEEK)),
     })
 show(pd.DataFrame(rows), left=2)
 ```
@@ -694,9 +786,9 @@ rows = []
 for c in CRIMES:
     m = tab(c, "models")
     for _, r in m.iterrows():
-        rows.append({"": CNAME[c] if r["model"] == m["model"].iloc[0] else "", "Model": r["model"],
+        rows.append({"": CNAME[c], "Model": r["model"],
                      "Log-likelihood": num(r["loglik"], 1), "Parameters": int(r["npar"]), "AIC": num(r["aic"], 1)})
-show(pd.DataFrame(rows), left=2)
+show(pd.DataFrame(rows), left=2, group=True)
 ```
 
 ```{python}
@@ -708,7 +800,7 @@ def est_rows(c):
     kp = s["kernel_par"]
     out = {
         "Kernel": s["kernel_name"].capitalize(),
-        "Background neighbors k": str(s["k_nn"]),
+        "Background neighbors $k$": str(s["k_nn"]),
         "Productivity $\\theta$": est_ci(s["theta"], 3),
         "Fatal shooting multiplier on $\\theta$": est_ci(s["covariate_effect"], 2) if s["covariate_effect"] else "",
         "Arrest multiplier $\\kappa$": f"{s['kappa']['exp']:.2f} ({s['kappa_profile'][0]:.2f} to {s['kappa_profile'][1]:.2f})",
@@ -726,11 +818,31 @@ show(pd.DataFrame({"": list(e["shootings"]), CNAME["shootings"]: list(e["shootin
                    CNAME["carprowl"]: list(e["carprowl"].values())}))
 ```
 
+```{python}
+#| label: tbl-reg
+#| tbl-cap: "The same estimates in the regression form of @eq-regression, with 95% intervals. $\\beta_1$ is the productivity $\\theta$ (Wald interval on the log scale). $\\beta_2 = -\\theta (1 - \\kappa)$, and its interval is its value at the two ends of the profile likelihood interval for $\\kappa$, refitting the other parameters, as for crimes prevented. For shootings each coefficient is split by whether the earlier shooting was fatal."
+REG = {c: pd.read_csv(R / "models" / f"{c}_regression.csv").set_index(["term", "group"]) for c in CRIMES}
+GROUP = {"reference": ", after a non-fatal shooting", "fatal": ", after a fatal shooting", "all": ""}
+rows = []
+for c in CRIMES:
+    for term, sym in [("beta1", "$\\beta_1$"), ("beta2", "$\\beta_2$")]:
+        for group in [g for g in GROUP if (term, g) in REG[c].index]:
+            r = REG[c].loc[(term, group)]
+            rows.append({"": CNAME[c], "Coefficient": sym + GROUP[group], "Estimate": f"{r['est']:.3f}",
+                         "95% interval": f"{r['low']:.3f} to {r['high']:.3f}"})
+show(pd.DataFrame(rows), left=2, group=True)
+```
+
 For each crime type I fit both temporal kernels with the background's
 nearest-neighbor count $k$ at 5, 10, 15, and 30, and take the combination
 with the highest likelihood (@tbl-grid in the appendix has all of them).
-@tbl-models compares models at that choice and @tbl-est gives the
-estimates.
+@tbl-models compares models at that choice, @tbl-est gives the estimates,
+and @tbl-reg gives the same estimates as the two coefficients of
+@eq-regression. For car prowls $\beta_2$ is
+`{python} f"{REG['carprowl'].loc[('beta2', 'all'), 'est']:.3f}"` against a
+$\beta_1$ of `{python} f"{REG['carprowl'].loc[('beta1', 'all'), 'est']:.3f}"`:
+once a car prowl has an arrest it adds almost nothing to the rate. For
+shootings the interval for $\beta_2$ runs from below zero to above it.
 
 ## Car prowls
 
@@ -842,10 +954,10 @@ for c in CRIMES:
     p = s["prevented"]
     rows.append({
         "": CNAME[c], "Crimes": num(s["n"]), "Arrests": num(s["arrests"]),
-        "Prevented, direct": num(p["direct"], 1),
-        "Prevented, total": f"{num(p['total'], 1)} ({ci(s['prevented_prediction'])})",
-        "Per 100 arrests": num(100 * p["per_arrest"], 1),
-        "Share of crimes": pct(p["share"], 2),
+        "Prevented,\ndirect": num(p["direct"], 1),
+        "Prevented,\ntotal": f"{num(p['total'], 1)} ({ci(s['prevented_prediction'])})",
+        "Per 100\narrests": num(100 * p["per_arrest"], 1),
+        "Share of\ncrimes": pct(p["share"], 2),
     })
 show(pd.DataFrame(rows))
 ```
@@ -954,6 +1066,8 @@ a long time or deterrence from the certainty of being caught [@nagin2013],
 neither of which a triggering kernel measures. The shooting result says the
 same thing more bluntly: with shootings in Chicago close to independent
 given place and season, there is little chain in space and time to break.
+That covers retaliation close in space and time. Retaliation that crosses
+the city, or comes weeks later, is outside what this model sees.
 
 Several limitations deserve mention. The estimate of $\kappa$ is
 observational. Arrested crimes are not a random sample, and I have only
@@ -984,7 +1098,25 @@ cities I checked only Chicago does so for shootings completely enough to
 use. Incident-based records reported to the FBI's National Incident-Based
 Reporting System link arrests to offenses for thousands of agencies, but
 without locations; a version of the model in time alone could use them,
-and I plan to add that analysis.
+and I plan to add that analysis. A model in time alone would also count
+retaliation wherever in the city it happens, at the cost of having to pick
+it out from every other shooting.
+
+# Replication materials {.unnumbered}
+
+The code, data, simulation results, and paper source are at
+https://github.com/apwheele/ArrestHawkes. The scripts download the crime
+and arrest tables from the Chicago and Seattle open data portals, link
+arrests to crimes, run the simulations, and fit the models; the README
+lists the order to run them in. The repository also has the linked data
+used here, since the portals update their tables over time.
+
+# AI disclosure {.unnumbered}
+
+I used Anthropic's Claude models for this work. The model, its code, and
+the simulations were done with Claude Fable 5.2. When my usage quota for
+that model ran out, the paper and later amendments were done with Claude
+Opus 5.5.
 
 # References
 
@@ -997,6 +1129,7 @@ and I plan to add that analysis.
 
 ```{python}
 #| label: tbl-grid
+#| tbl-pos: H
 #| tbl-cap: "Fits across temporal kernels and background smoothing ($k$ nearest neighbors; the median bandwidth is in meters). The row with the highest log-likelihood for each crime type is the one used in the paper."
 rows = []
 for c in CRIMES:
@@ -1004,12 +1137,13 @@ for c in CRIMES:
     best = g["loglik"].idxmax()
     for i, r in g.iterrows():
         rows.append({
-            "": CNAME[c] if i == 0 else "", "Kernel": {"exp": "Exponential", "lomax": "Power law"}[r["kernel"]],
-            "k": int(r["k"]), "Bandwidth": num(r["median_bandwidth"]),
-            "Log-likelihood": num(r["loglik"], 1) + (" *" if i == best else ""),
-            "$\\theta$": f"{r['theta']:.3f}", "$\\kappa$": f"{r['kappa']:.2f}", "p ($\\kappa$ = 1)": pval(r["lr_p"]),
-            "Median lag (days)": f"{r['median_days']:.2f}", "$\\sigma$": num(r["sigma"]),
+            "": CNAME[c], "Kernel": {"exp": "Exponential", "lomax": "Power law"}[r["kernel"]],
+            "$k$": int(r["k"]), "Median\nbandwidth": num(r["median_bandwidth"]),
+            # the star hangs right of the number so the column stays aligned
+            "Log-\nlikelihood": num(r["loglik"], 1) + ((r"\rlap{\,*}" if PDF else " *") if i == best else ""),
+            "$\\theta$": f"{r['theta']:.3f}", "$\\kappa$": f"{r['kappa']:.2f}", "p\n($\\kappa$ = 1)": pval(r["lr_p"]),
+            "Median lag\n(days)": f"{r['median_days']:.2f}", "$\\sigma$": num(r["sigma"]),
             "Prevented": num(r["prevented"], 1),
         })
-show(pd.DataFrame(rows), left=2)
+show(pd.DataFrame(rows), left=2, group=True)
 ```

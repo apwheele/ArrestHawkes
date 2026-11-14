@@ -35,6 +35,16 @@ Let $a_i$ be the time of the arrest for crime $i$, with $a_i = \infty$ if there 
 
 Before the arrest, crime $i$ excites as usual. From the arrest on, its kernel is multiplied by $\kappa_i \ge 0$ (<a href="#fig-schematic" class="quarto-xref">Figure 1</a>). I mostly use a single $\kappa$, but the multiplier can depend on characteristics of the arrest, $\kappa_i = \exp(z_i^\top \beta)$, for example whether the person was booked into jail or released. The intensity only uses arrests made before $t$, so it is a valid conditional intensity, and it stays non-negative for any $\kappa_i \ge 0$. General inhibition in Hawkes processes, where events subtract from the intensity, needs a nonlinear link to keep the intensity positive and complicates estimation ([Bonnet, Martinez Herrera, and Sangnier 2021](#ref-bonnet2021)); scaling a crime’s own kernel avoids that.
 
+With a single $\theta$ and $\kappa$ the model can be written as a regression of the crime rate on two running sums,
+
+<span id="eq-regression">$$
+\lambda(t, s) = \mu(t, s)
+  + \beta_1 \sum_{i:\, t_i < t} g(t - t_i)\, h(s - s_i)
+  + \beta_2 \sum_{i:\, a_i < t} g(t - t_i)\, h(s - s_i),
+ \qquad(1)$$</span>
+
+where $\beta_1 = \theta$ and $\beta_2 = -\theta (1 - \kappa)$. The first sum is the usual self-exciting term over every earlier crime. The second is the same sum over only the crimes whose arrest has already happened, so it measures how much of the current excitation comes from arrested crimes. $\beta_2 = 0$ is no arrest effect, $\beta_2 = -\beta_1$ is an arrest that ends the chain, and $\kappa = 1 + \beta_2 / \beta_1$. With covariates each sum splits by group, one coefficient per group (<a href="#tbl-reg" class="quarto-xref">Table 6</a> gives the fitted values). For counts $Y$ in short time bins and a fixed kernel this is a Poisson regression with an identity link, $\mathrm{E}[Y] = \mu + \beta_1 X_1 + \beta_2 X_2$. A log link, $\log \mathrm{E}[Y] = \log \mu + \beta_1 X_1 + \beta_2 X_2$, is a different model: each past crime would multiply the whole rate, background included, instead of adding its own offspring, and the counts of triggered and prevented crimes below would lose their closed forms.
+
 ![](paper_files/figure-commonmark/fig-schematic-output-1.png)
 
 The expected number of direct offspring of a crime arrested after a delay $d_i = a_i - t_i$ is the full-strength part before the arrest plus the dampened part after,
@@ -46,7 +56,7 @@ m_i = \theta_i \left[ 1 - S(d_i) \right] + \theta_i \kappa_i S(d_i)
 
 so the arrest removes $\theta_i (1 - \kappa_i) S(d_i)$ direct offspring. With the exponential kernel that is $\theta_i (1 - \kappa_i) e^{-\omega d_i}$: an arrest at the scene ($d_i = 0$) removes the share $1 - \kappa_i$ of everything the crime would have triggered, and each $\log(2)/\omega$ days of delay cuts what the arrest can prevent in half.
 
-What $\kappa$ picks up depends on the crime. For a spree, where follow-on crimes are the same person continuing, the arrest incapacitates and $\kappa$ should be near zero if the right person is in custody. For retaliatory violence the follow-on crime is committed by someone else, and an arrest may or may not satisfy the other side ([Papachristos 2009](#ref-papachristos2009)), so $\kappa$ could be anywhere, in principle even above one.
+What $\kappa$ picks up depends on the crime. For a spree, where follow-on crimes are the same person continuing, the arrest incapacitates and $\kappa$ should be near zero if the right person is in custody. Sprees are not the only way an arrest can break a chain. For shootings much of the follow-on violence is retaliation, committed by someone else, often on the victim’s side ([Papachristos 2009](#ref-papachristos2009)). An arrest can prevent that too. It takes the shooter, who is both the target of retaliation and a likely shooter in the next exchange, off the street, and a case the courts are handling can stand in for the street justice the other side would otherwise seek. It could also go the other way if the arrest is read as one side cooperating with the police. So for shootings $\kappa$ below one is plausible but less certain than for a spree, and in principle it could be above one.
 
 ## Why the arrest has to enter at the time it happens
 
@@ -117,21 +127,21 @@ For each world I fit the model with the arrest entering at its time, and the fix
 
 <div class="cell-output cell-output-display cell-output-markdown" execution_count="3">
 
-| Scenario                       | Method                         | True $\kappa$ | Median $\kappa$ | Reject $\kappa$ = 1 | Cover $\kappa$ | Prevented, true | Prevented, est. | Cover prevented |
-|:-------------------------------|:-------------------------------|--------------:|----------------:|--------------------:|---------------:|----------------:|----------------:|----------------:|
-| Model                          | Arrest at its time             |           0.3 |            0.29 |                100% |            97% |             151 |             151 |             95% |
-| Model                          | Arrest as fixed mark           |           0.3 |            0.56 |                100% |                |             151 |              93 |                 |
-| No arrest effect               | Arrest at its time             |           1.0 |            0.99 |                  7% |            93% |               0 |               3 |             96% |
-| No arrest effect               | Arrest as fixed mark           |           1.0 |            1.00 |                  3% |                |               0 |               2 |                 |
-| Late arrests                   | Arrest at its time             |           0.3 |            0.28 |                100% |            98% |             120 |             120 |             96% |
-| Late arrests                   | Arrest as fixed mark           |           0.3 |            0.69 |                 98% |                |             120 |              53 |                 |
-| Confounded                     | Arrest at its time             |           0.3 |            0.36 |                100% |            77% |             482 |             343 |             20% |
-| Confounded                     | Arrest as fixed mark           |           0.3 |            0.71 |                100% |                |             482 |             150 |                 |
-| Confounded                     | Arrest at its time + covariate |           0.3 |            0.29 |                100% |            95% |             482 |             484 |             92% |
-| Sprees                         | Arrest at its time             |           0.0 |            0.00 |                100% |           100% |             469 |             414 |             69% |
-| Sprees                         | Arrest as fixed mark           |           0.0 |            0.22 |                100% |                |             469 |             327 |                 |
-| Sprees, earlier crimes cleared | Arrest at its time             |           0.0 |            0.00 |                100% |            99% |             472 |             542 |             62% |
-| Sprees, earlier crimes cleared | Arrest as fixed mark           |           0.0 |            0.92 |                 20% |                |             472 |              34 |                 |
+| Scenario                       | Method                         | True $\kappa$ | Median $\kappa$ | Reject $\kappa$ = 1 | Cover $\kappa$ | Prevented, true | Prevented, estimated | Cover prevented |
+|:-------------------------------|:-------------------------------|--------------:|----------------:|--------------------:|---------------:|----------------:|---------------------:|----------------:|
+| Model                          | Arrest at its time             |           0.3 |            0.29 |                100% |            97% |             151 |                  151 |             95% |
+|                                | Arrest as fixed mark           |           0.3 |            0.56 |                100% |                |             151 |                   93 |                 |
+| No arrest effect               | Arrest at its time             |           1.0 |            0.99 |                  7% |            93% |               0 |                    3 |             96% |
+|                                | Arrest as fixed mark           |           1.0 |            1.00 |                  3% |                |               0 |                    2 |                 |
+| Late arrests                   | Arrest at its time             |           0.3 |            0.28 |                100% |            98% |             120 |                  120 |             96% |
+|                                | Arrest as fixed mark           |           0.3 |            0.69 |                 98% |                |             120 |                   53 |                 |
+| Confounded                     | Arrest at its time             |           0.3 |            0.36 |                100% |            77% |             482 |                  343 |             20% |
+|                                | Arrest as fixed mark           |           0.3 |            0.71 |                100% |                |             482 |                  150 |                 |
+|                                | Arrest at its time + covariate |           0.3 |            0.29 |                100% |            95% |             482 |                  484 |             92% |
+| Sprees                         | Arrest at its time             |           0.0 |            0.00 |                100% |           100% |             469 |                  414 |             69% |
+|                                | Arrest as fixed mark           |           0.0 |            0.22 |                100% |                |             469 |                  327 |                 |
+| Sprees, earlier crimes cleared | Arrest at its time             |           0.0 |            0.00 |                100% |            99% |             472 |                  542 |             62% |
+|                                | Arrest as fixed mark           |           0.0 |            0.92 |                 20% |                |             472 |                   34 |                 |
 
 </div>
 
@@ -153,12 +163,12 @@ The model needs, for each crime, a time, a location, and the time of the arrest 
 
 <div class="cell-output cell-output-display cell-output-markdown" execution_count="5">
 
-| Year      | Shootings | Open data, any arrest | Open data, violent charge |                                               Published |
-|:----------|:----------|----------------------:|--------------------------:|--------------------------------------------------------:|
-| 2022      | Fatal     |                   23% |                       20% |                     27% (CBS Chicago, from CPD records) |
-| 2023      | Fatal     |                   21% |                       19% |                      17%, first 10 months (CBS Chicago) |
-| 2021-2024 | Fatal     |                   21% |                       19% |      25% cleared by arrest, year not stated (Sun-Times) |
-| 2024      | Non-fatal |                   10% |                        7% |              141 of about 2,300 victims, 6% (Sun-Times) |
+| Year      | Shootings | Open data, any arrest | Open data, violent charge | Published                                               |
+|:----------|:----------|----------------------:|--------------------------:|:--------------------------------------------------------|
+| 2022      | Fatal     |                   23% |                       20% | 27% (CBS Chicago, from CPD records)                     |
+| 2023      | Fatal     |                   21% |                       19% | 17%, first 10 months (CBS Chicago)                      |
+| 2021-2024 | Fatal     |                   21% |                       19% | 25% cleared by arrest, year not stated (Sun-Times)      |
+| 2024      | Non-fatal |                   10% |                        7% | 141 of about 2,300 victims, 6% (Sun-Times)              |
 | 2018-2024 | Non-fatal |                    8% |                        6% | 1,200 of more than 19,000 victims, about 6% (Sun-Times) |
 
 </div>
@@ -167,7 +177,7 @@ The model needs, for each crime, a time, a location, and the time of the arrest 
 
 *Car prowls: Seattle, Washington.* The Seattle Police Department’s crime table has one row per offense with the report number, the date and time of the offense, and a location masked to the hundred block ([Seattle Police Department 2026b](#ref-spdcrime)). Its arrest table starts in 2019 and has one row per arrest charge with the date and time of the arrest, the report number of the case, and the type of arrest ([Seattle Police Department 2026a](#ref-spdarrest)). Car prowls are offenses coded theft from motor vehicle, from January 2019 through June 2026, which leaves four months for late-entered arrests. The offense time is the start of the period the victim reports, and for a car broken into overnight that can be off by hours. In both cities I link each case to the earliest arrest with the same number, and an arrest logged shortly before the offense time (39 shootings, 34 car prowls) is treated as made at the scene.
 
-*Cities that did not work.* Seattle also flags shootings, but its public file redacts the location of nearly all fatal shootings. In Dallas, the incident table’s own case status says that 36% to 60% of gun homicides each year were cleared by arrest, but only half of the incidents with that status appear in the public arrest table, the only source of an arrest date, and only a few percent of gun homicides do. In Baltimore, arrests that carry an incident number link to about 9% of shootings, against a clearance rate the department reports at over 50%. Philadelphia publishes shootings with exact times and locations but arrests only as daily counts by area; its arrests can be found in Pennsylvania court dockets by incident number, but the court portal limits searches to about one a minute. Other large cities either publish no arrest table with a case number or anonymize the case number.
+*Cities that did not work.* Seattle also flags shootings, but its public file redacts the location of nearly all fatal shootings. Its arrest link also falls short, which rules out even an analysis in time alone. For homicides from January 1 to September 7, 2023, the open data have 47, of which 16 (34%) had a linked arrest by that date, where KING 5 counted 57 homicides by that date and about half with an arrest ([KING 5 News 2023](#ref-king52023)). In Dallas, the incident table’s own case status says that 36% to 60% of gun homicides each year were cleared by arrest, but only half of the incidents with that status appear in the public arrest table, the only source of an arrest date, and only a few percent of gun homicides do. In Baltimore, arrests that carry an incident number link to about 9% of shootings, against a clearance rate the department reports at over 50%. Philadelphia publishes shootings with exact times and locations but arrests only as daily counts by area; its arrests can be found in Pennsylvania court dockets by incident number, but the court portal limits searches to about one a minute. Other large cities either publish no arrest table with a case number or anonymize the case number.
 
 Both cities publish the block and not the address, so many cases share identical coordinates, which a continuous spatial kernel cannot handle (the likelihood is unbounded as $\sigma$ goes to zero). I add Gaussian noise with a standard deviation of 30 meters to each coordinate, about the spread of a uniform position along a block, and check how much results depend on the random draw.
 
@@ -211,7 +221,7 @@ Chicago shootings show the same shape on a smaller scale. In the six hours after
 |                                       |    Shootings (Chicago) |   Car prowls (Seattle) |
 |:--------------------------------------|-----------------------:|-----------------------:|
 | Kernel                                |            Exponential |              Power law |
-| Background neighbors k                |                      5 |                      5 |
+| Background neighbors $k$              |                      5 |                      5 |
 | Productivity $\theta$                 | 0.018 (0.015 to 0.021) | 0.072 (0.068 to 0.075) |
 | Fatal shooting multiplier on $\theta$ |    0.52 (0.30 to 0.91) |                        |
 | Arrest multiplier $\kappa$            |    0.83 (0.19 to 1.78) |    0.05 (0.00 to 0.24) |
@@ -222,7 +232,20 @@ Chicago shootings show the same shape on a smaller scale. In the six hours after
 
 </div>
 
-For each crime type I fit both temporal kernels with the background’s nearest-neighbor count $k$ at 5, 10, 15, and 30, and take the combination with the highest likelihood (<a href="#tbl-grid" class="quarto-xref">Table 7</a> in the appendix has all of them). <a href="#tbl-models" class="quarto-xref">Table 4</a> compares models at that choice and <a href="#tbl-est" class="quarto-xref">Table 5</a> gives the estimates.
+<div class="cell-output cell-output-display cell-output-markdown" execution_count="11">
+
+|                      | Coefficient                           | Estimate |     95% interval |
+|:---------------------|:--------------------------------------|---------:|-----------------:|
+| Shootings (Chicago)  | $\beta_1$, after a non-fatal shooting |    0.018 |   0.015 to 0.021 |
+|                      | $\beta_1$, after a fatal shooting     |    0.009 |   0.005 to 0.016 |
+|                      | $\beta_2$, after a non-fatal shooting |   -0.003 |  -0.014 to 0.013 |
+|                      | $\beta_2$, after a fatal shooting     |   -0.002 |  -0.008 to 0.007 |
+| Car prowls (Seattle) | $\beta_1$                             |    0.072 |   0.068 to 0.075 |
+|                      | $\beta_2$                             |   -0.068 | -0.072 to -0.054 |
+
+</div>
+
+For each crime type I fit both temporal kernels with the background’s nearest-neighbor count $k$ at 5, 10, 15, and 30, and take the combination with the highest likelihood (<a href="#tbl-grid" class="quarto-xref">Table 8</a> in the appendix has all of them). <a href="#tbl-models" class="quarto-xref">Table 4</a> compares models at that choice, <a href="#tbl-est" class="quarto-xref">Table 5</a> gives the estimates, and <a href="#tbl-reg" class="quarto-xref">Table 6</a> gives the same estimates as the two coefficients of <a href="#eq-regression" class="quarto-xref">Equation 1</a>. For car prowls $\beta_2$ is -0.068 against a $\beta_1$ of 0.072: once a car prowl has an arrest it adds almost nothing to the rate. For shootings the interval for $\beta_2$ runs from below zero to above it.
 
 ## Car prowls
 
@@ -242,7 +265,7 @@ The data cannot tell whether arrests stop follow-on shootings. The estimate of $
 
 ## Crimes prevented
 
-<div class="cell-output cell-output-display cell-output-markdown" execution_count="13">
+<div class="cell-output cell-output-display cell-output-markdown" execution_count="14">
 
 |                      | Crimes | Arrests | Prevented, direct |    Prevented, total | Per 100 arrests | Share of crimes |
 |:---------------------|-------:|--------:|------------------:|--------------------:|----------------:|----------------:|
@@ -253,7 +276,7 @@ The data cannot tell whether arrests stop follow-on shootings. The estimate of $
 
 ![](paper_files/figure-commonmark/fig-curve-output-1.png)
 
-<a href="#tbl-prevented" class="quarto-xref">Table 6</a> turns the estimates into counts. The 722 car prowl arrests prevented an estimated 42 car prowls (95% interval 26 to 56), about 6 for every 100 arrests. The effect of an arrest is large in relative terms and small in absolute terms, and the reason is in the two numbers that multiply together. A car prowl triggers 0.07 others on average, so that is the most an arrest at the scene can prevent directly, and only 1.1% of car prowls have an arrest. Against 66,355 car prowls in the period, the chains broken by arrest are 0.06%.
+<a href="#tbl-prevented" class="quarto-xref">Table 7</a> turns the estimates into counts. The 722 car prowl arrests prevented an estimated 42 car prowls (95% interval 26 to 56), about 6 for every 100 arrests. The effect of an arrest is large in relative terms and small in absolute terms, and the reason is in the two numbers that multiply together. A car prowl triggers 0.07 others on average, so that is the most an arrest at the scene can prevent directly, and only 1.1% of car prowls have an arrest. Against 66,355 car prowls in the period, the chains broken by arrest are 0.06%.
 
 <a href="#fig-curve" class="quarto-xref">Figure 5</a> shows how fast the value of an arrest decays. For car prowls an arrest at the scene prevents about 0.073 crimes; one made a day later prevents 0.014, because by then 81% of the follow-on crimes have already happened. For shootings the estimate is 2 shootings prevented in ten and a half years, with an interval (-10 to 11) that includes zero, and the curve falls to nothing within a few hours.
 
@@ -263,17 +286,25 @@ These counts are only the crimes prevented through this channel: the short-run c
 
 The dashed lines in <a href="#fig-followon" class="quarto-xref">Figure 3</a> are a check on fit: the follow-on rates the fitted model implies, against the raw rates. For car prowls the model reproduces the spike in the first six hours and its absence after an arrest. It puts 0.31 observed against 0.23 implied in that first bin, and it is low over the next two weeks, where the raw rate stays a little above the long-run rate longer than a single kernel allows. For shootings the model accounts for only part of the excess in the first six hours within 200 meters, since its fitted spatial spread is wider than that. The usual residual check for point processes, rescaling time by the fitted citywide intensity so that gaps between crimes should be Exponential(1) ([Ogata 1988](#ref-ogata1988); [Brown et al. 2002](#ref-brown2002)), is not informative here. 49% of car prowl offense times are recorded on the hour and 17% of car prowls share a timestamp with the one before, so the residuals fail in the same way for every model (Kolmogorov-Smirnov distance 0.17 for the arrest model and 0.17 for the background alone). Crimes with identical recorded times also cannot be ordered, so neither counts as triggering the other, which makes the estimate of $\theta$ conservative.
 
-The car prowl estimates do not depend on the random draw used to unmask locations: with two other draws $\kappa$ is 0.05 and 0.04 and crimes prevented 42 and 43. They do depend, as expected, on how smooth the background is (<a href="#tbl-grid" class="quarto-xref">Table 7</a>). A smoother background (larger $k$) hands more clustering to the triggering term, raising $\theta$ and with it the count of crimes prevented. For car prowls $\kappa$ itself stays between 0.05 and 0.07 across all eight combinations, and crimes prevented between 31 and 53.
+The car prowl estimates do not depend on the random draw used to unmask locations: with two other draws $\kappa$ is 0.05 and 0.04 and crimes prevented 42 and 43. They do depend, as expected, on how smooth the background is (<a href="#tbl-grid" class="quarto-xref">Table 8</a>). A smoother background (larger $k$) hands more clustering to the triggering term, raising $\theta$ and with it the count of crimes prevented. For car prowls $\kappa$ itself stays between 0.05 and 0.07 across all eight combinations, and crimes prevented between 31 and 53.
 
 # Discussion
 
 The arrest term is a small change to a standard model, and it answers a question the standard model cannot: of the crimes a crime would have triggered, how many did the arrest stop? The estimate has a direct reading for police. For car prowls in Seattle, an arrest at the scene all but ends the elevated risk that follows a car prowl. A patrol response that catches someone in the act is worth far more, for this purpose, than an arrest a week later, because the risk the arrest can remove is gone within a day.
 
-It also gives a sober accounting of scale. Near repeat patterns are sometimes presented as if interrupting them would move crime totals. Here the chains are short. If a car prowl triggers 0.07 others, then even arresting someone at the scene of every car prowl would prevent, through this channel, fewer than one in ten. The value of arrests for car prowls has to come mostly from somewhere else, such as incapacitating people who offend at a high rate for a long time or deterrence from the certainty of being caught ([Nagin 2013](#ref-nagin2013)), neither of which a triggering kernel measures. The shooting result says the same thing more bluntly: with shootings in Chicago close to independent given place and season, there is little chain in space and time to break.
+It also gives a sober accounting of scale. Near repeat patterns are sometimes presented as if interrupting them would move crime totals. Here the chains are short. If a car prowl triggers 0.07 others, then even arresting someone at the scene of every car prowl would prevent, through this channel, fewer than one in ten. The value of arrests for car prowls has to come mostly from somewhere else, such as incapacitating people who offend at a high rate for a long time or deterrence from the certainty of being caught ([Nagin 2013](#ref-nagin2013)), neither of which a triggering kernel measures. The shooting result says the same thing more bluntly: with shootings in Chicago close to independent given place and season, there is little chain in space and time to break. That covers retaliation close in space and time. Retaliation that crosses the city, or comes weeks later, is outside what this model sees.
 
 Several limitations deserve mention. The estimate of $\kappa$ is observational. Arrested crimes are not a random sample, and I have only crude covariates to adjust for the difference; the simulation shows the direction of the bias when a trait raises both productivity and the chance of arrest. The arrest link is to one report, and an arrest that should be credited against a string of an offender’s crimes is credited against one. Chicago’s arrest table gives the case number for about 70% of arrests, so some arrests for shootings are missing; the arrest shares match published arrest rates closely but run a few points low for homicides, and a missing arrest biases the estimate of $\kappa$ toward one. Both cities publish the block and not the address, and Seattle’s car prowl times are imprecise for crimes discovered after the fact. And the model’s kernels are simple: one decay rate and one spatial scale for everything, where sprees within a night and returns to the same place weeks later are probably different processes.
 
-Natural extensions follow from those. With offender identifiers, arrests could dampen the kernels of all of a person’s linked crimes at once. With gang or group data, the retaliation channel for shootings could be modeled on a network instead of in space ([Green, Horel, and Papachristos 2017](#ref-green2017)), where the question of whether an arrest satisfies or provokes the other side has more bite. The same dampening term would also work for any intervention attached to a crime with a timestamp, such as a violence interrupter’s response ([Park et al. 2021](#ref-park2021)) or a victim services contact. The data requirement is the binding constraint. Few cities publish which crime had an arrest and when, and of the large cities I checked only Chicago does so for shootings completely enough to use. Incident-based records reported to the FBI’s National Incident-Based Reporting System link arrests to offenses for thousands of agencies, but without locations; a version of the model in time alone could use them, and I plan to add that analysis.
+Natural extensions follow from those. With offender identifiers, arrests could dampen the kernels of all of a person’s linked crimes at once. With gang or group data, the retaliation channel for shootings could be modeled on a network instead of in space ([Green, Horel, and Papachristos 2017](#ref-green2017)), where the question of whether an arrest satisfies or provokes the other side has more bite. The same dampening term would also work for any intervention attached to a crime with a timestamp, such as a violence interrupter’s response ([Park et al. 2021](#ref-park2021)) or a victim services contact. The data requirement is the binding constraint. Few cities publish which crime had an arrest and when, and of the large cities I checked only Chicago does so for shootings completely enough to use. Incident-based records reported to the FBI’s National Incident-Based Reporting System link arrests to offenses for thousands of agencies, but without locations; a version of the model in time alone could use them, and I plan to add that analysis. A model in time alone would also count retaliation wherever in the city it happens, at the cost of having to pick it out from every other shooting.
+
+# Replication materials
+
+The code, data, simulation results, and paper source are at https://github.com/apwheele/ArrestHawkes. The scripts download the crime and arrest tables from the Chicago and Seattle open data portals, link arrests to crimes, run the simulations, and fit the models; the README lists the order to run them in. The repository also has the linked data used here, since the portals update their tables over time.
+
+# AI disclosure
+
+I used Anthropic’s Claude models for this work. The model, its code, and the simulations were done with Claude Fable 5.2. When my usage quota for that model ran out, the paper and later amendments were done with Claude Opus 5.5.
 
 # References
 
@@ -324,6 +355,12 @@ Grimm, Andy, Tom Schuba, and Andy Boyle. 2025. “‘Where’s My Justice?’ On
 <div id="ref-hawkes1971" class="csl-entry">
 
 Hawkes, Alan G. 1971. “Spectra of Some Self-Exciting and Mutually Exciting Point Processes.” *Biometrika* 58 (1): 83–90. <https://doi.org/10.1093/biomet/58.1.83>.
+
+</div>
+
+<div id="ref-king52023" class="csl-entry">
+
+KING 5 News. 2023. “Homicides Increasing in Seattle, Half of 2023 Cases Still Open.” KING 5, Seattle. <https://www.king5.com/article/news/local/homicides-increasing-seattle-half-of-cases-still-open/281-2980202a-9242-4089-8d18-29deca90daa2>.
 
 </div>
 
@@ -415,25 +452,25 @@ Wheeler, Andrew P., Jordan R. Riddell, and Cory P. Haberman. 2021. “Breaking t
 
 # Appendix: sensitivity to the kernel and background
 
-<div class="cell-output cell-output-display cell-output-markdown" execution_count="15">
+<div class="cell-output cell-output-display cell-output-markdown" execution_count="16">
 
-|                      | Kernel      |   k | Bandwidth |  Log-likelihood | $\theta$ | $\kappa$ | p ($\kappa$ = 1) | Median lag (days) | $\sigma$ | Prevented |
-|:---------------------|:------------|----:|----------:|----------------:|---------:|---------:|-----------------:|------------------:|---------:|----------:|
-| Shootings (Chicago)  | Exponential |   5 |        96 |      -495,927.3 |    0.018 |     0.83 |            0.683 |              0.05 |      610 |       2.2 |
-|                      | Exponential |  10 |       140 |      -497,324.9 |    0.018 |     0.74 |            0.521 |              0.05 |      613 |       3.3 |
-|                      | Exponential |  15 |       174 |      -498,357.1 |    0.019 |     0.71 |            0.460 |              0.05 |      619 |       3.8 |
-|                      | Exponential |  30 |       255 |      -500,562.4 |    0.020 |     0.64 |            0.331 |              0.05 |      634 |       5.3 |
-|                      | Power law   |   5 |        96 |   -495,927.2 \* |    0.019 |     0.82 |            0.690 |              0.05 |      600 |       2.4 |
-|                      | Power law   |  10 |       140 |      -497,324.9 |    0.018 |     0.74 |            0.526 |              0.05 |      613 |       3.2 |
-|                      | Power law   |  15 |       174 |      -498,357.1 |    0.019 |     0.71 |            0.465 |              0.05 |      619 |       3.8 |
-|                      | Power law   |  30 |       255 |      -500,562.4 |    0.020 |     0.64 |            0.334 |              0.05 |      634 |       5.2 |
-| Car prowls (Seattle) | Exponential |   5 |        40 |    -1,057,048.8 |    0.056 |     0.06 |         \< 0.001 |              0.11 |       78 |      30.8 |
-|                      | Exponential |  10 |        60 |    -1,059,450.0 |    0.057 |     0.07 |         \< 0.001 |              0.11 |       79 |      31.5 |
-|                      | Exponential |  15 |        75 |    -1,061,247.2 |    0.058 |     0.07 |         \< 0.001 |              0.12 |       80 |      32.2 |
-|                      | Exponential |  30 |       114 |    -1,065,103.9 |    0.061 |     0.06 |         \< 0.001 |              0.13 |       82 |      34.3 |
-|                      | Power law   |   5 |        40 | -1,056,787.3 \* |    0.072 |     0.05 |         \< 0.001 |              0.17 |       73 |      42.2 |
-|                      | Power law   |  10 |        60 |    -1,059,142.2 |    0.075 |     0.05 |         \< 0.001 |              0.19 |       72 |      44.3 |
-|                      | Power law   |  15 |        75 |    -1,060,895.0 |    0.078 |     0.05 |         \< 0.001 |              0.21 |       71 |      46.4 |
-|                      | Power law   |  30 |       114 |    -1,064,631.2 |    0.086 |     0.05 |         \< 0.001 |              0.27 |       69 |      52.7 |
+|                      | Kernel      | $k$ | Median bandwidth |  Log-likelihood | $\theta$ | $\kappa$ | p ($\kappa$ = 1) | Median lag (days) | $\sigma$ | Prevented |
+|:---------------------|:------------|----:|-----------------:|----------------:|---------:|---------:|-----------------:|------------------:|---------:|----------:|
+| Shootings (Chicago)  | Exponential |   5 |               96 |      -495,927.3 |    0.018 |     0.83 |            0.683 |              0.05 |      610 |       2.2 |
+|                      | Exponential |  10 |              140 |      -497,324.9 |    0.018 |     0.74 |            0.521 |              0.05 |      613 |       3.3 |
+|                      | Exponential |  15 |              174 |      -498,357.1 |    0.019 |     0.71 |            0.460 |              0.05 |      619 |       3.8 |
+|                      | Exponential |  30 |              255 |      -500,562.4 |    0.020 |     0.64 |            0.331 |              0.05 |      634 |       5.3 |
+|                      | Power law   |   5 |               96 |   -495,927.2 \* |    0.019 |     0.82 |            0.690 |              0.05 |      600 |       2.4 |
+|                      | Power law   |  10 |              140 |      -497,324.9 |    0.018 |     0.74 |            0.526 |              0.05 |      613 |       3.2 |
+|                      | Power law   |  15 |              174 |      -498,357.1 |    0.019 |     0.71 |            0.465 |              0.05 |      619 |       3.8 |
+|                      | Power law   |  30 |              255 |      -500,562.4 |    0.020 |     0.64 |            0.334 |              0.05 |      634 |       5.2 |
+| Car prowls (Seattle) | Exponential |   5 |               40 |    -1,057,048.8 |    0.056 |     0.06 |         \< 0.001 |              0.11 |       78 |      30.8 |
+|                      | Exponential |  10 |               60 |    -1,059,450.0 |    0.057 |     0.07 |         \< 0.001 |              0.11 |       79 |      31.5 |
+|                      | Exponential |  15 |               75 |    -1,061,247.2 |    0.058 |     0.07 |         \< 0.001 |              0.12 |       80 |      32.2 |
+|                      | Exponential |  30 |              114 |    -1,065,103.9 |    0.061 |     0.06 |         \< 0.001 |              0.13 |       82 |      34.3 |
+|                      | Power law   |   5 |               40 | -1,056,787.3 \* |    0.072 |     0.05 |         \< 0.001 |              0.17 |       73 |      42.2 |
+|                      | Power law   |  10 |               60 |    -1,059,142.2 |    0.075 |     0.05 |         \< 0.001 |              0.19 |       72 |      44.3 |
+|                      | Power law   |  15 |               75 |    -1,060,895.0 |    0.078 |     0.05 |         \< 0.001 |              0.21 |       71 |      46.4 |
+|                      | Power law   |  30 |              114 |    -1,064,631.2 |    0.086 |     0.05 |         \< 0.001 |              0.27 |       69 |      52.7 |
 
 </div>
